@@ -1,78 +1,36 @@
 import 'package:flutter/material.dart';
 
-class PlayerGestureDetector extends StatelessWidget {
-  final Widget child;
-
+class PlayerWidget extends StatelessWidget {
   final Size size;
-  final double widthPosition;
-  final double heightPosition;
-  final Function onPositionChanged;
+  final Size iconSize;
+  final double widthPosition; // 0.0 (esquerda) a 1 (direita)
+  final double heightPosition; // 0.0 (topo) a 1 (base)
+  final void Function(double widthPos, double heightPos)? onPositionChanged;
 
-  PlayerGestureDetector(
-      {super.key,
-      required this.child,
-      required this.onPositionChanged,
-      this.size = const Size(50, 50),
-      this.widthPosition = 0.5,
-      this.heightPosition = 0.5});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onPanUpdate: (details) {
-        // Calcula a nova posição com base no gesto
-        // final newWidthPos = (widthPosition +
-        //     details.delta.dx / MediaQuery.of(context).size.width);
-        // final newHeightPos = (heightPosition +
-        //     details.delta.dy / MediaQuery.of(context).size.height);
-        // onPositionChanged(newWidthPos, newHeightPos);
-        onPositionChanged(details.localPosition.dx / size.width,
-            details.localPosition.dy / size.height);
-      },
-      child: child,
-    );
-  }
-}
-
-class PlayerWidget extends StatefulWidget {
-  final Size size;
-  Size iconSize;
-  double widthPosition; // 0.0 (esquerda) a 1 (direita)
-  double heightPosition; // 0.0 (topo) a 1 (base)
-  PlayerWidget({
+  const PlayerWidget({
     super.key,
     required this.size,
     this.iconSize = const Size(50, 50),
     required this.widthPosition,
     required this.heightPosition,
+    this.onPositionChanged,
   });
-  @override
-  State<PlayerWidget> createState() => _PlayerWidgetState();
-}
 
-class _PlayerWidgetState extends State<PlayerWidget> {
   @override
   Widget build(BuildContext context) {
-    return PlayerGestureDetector(
-      size: widget.size,
-      widthPosition: widget.widthPosition,
-      heightPosition: widget.heightPosition,
-      onPositionChanged: (
-        newWidthPos,
-        newHeightPos,
-      ) {
-        setState(() {
-          // Atualiza as posições com base no gesto
-          widget.widthPosition = newWidthPos;
-          widget.heightPosition = newHeightPos;
-        });
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onPanUpdate: (details) {
+        final wPos = (details.localPosition.dx / size.width).clamp(0.0, 1.0);
+        final hPos = (details.localPosition.dy / size.height).clamp(0.0, 1.0);
+        onPositionChanged?.call(wPos, hPos);
       },
       child: Align(
         alignment: Alignment(
-            widget.widthPosition * 2 - 1, widget.heightPosition * 2 - 1),
+            widthPosition * 2 - 1, heightPosition * 2 - 1),
         child: Container(
-          width: widget.iconSize.width,
-          height: widget.iconSize.height,
+          width: iconSize.width,
+          height: iconSize.height,
           decoration: BoxDecoration(
             color: Colors.white.withOpacity(0.8),
             shape: BoxShape.circle,

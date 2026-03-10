@@ -15,6 +15,7 @@ class RoadPainter extends CustomPainter {
   final bool showCenterLine;
   final bool showDebugNormals;
   final double offsetX;
+  final int repetitions;
 
   const RoadPainter({
     required this.params,
@@ -24,17 +25,13 @@ class RoadPainter extends CustomPainter {
     this.samplesPerSegment = 80,
     this.showCenterLine = true,
     this.showDebugNormals = false,
+    this.repetitions = 1,
   });
 
-  // ── Montagem dos segmentos ───────────────────────────────────────────────────
-  //
-  // Layout horizontal:
-  //   entrada | botFlat | SUBIDA | topFlat | DESCIDA | botFlat | saída
-  //
-  // C1 em cada junção: cp2(N), junção, cp1(N+1) são colineares.
-  // Para junções horizontais: todos no mesmo Y → tangente contínua automática.
-  //
-  List<RoadSegment> _buildSegments(Size size) {
+  // ── Build segments for one repetition at baseX offset ───────────────────────
+
+  static List<RoadSegment> buildSegmentsForRep(
+      Size size, RoadParams params, double baseX) {
     final w = size.width;
     final h = size.height;
 
@@ -45,86 +42,73 @@ class RoadPainter extends CustomPainter {
     final topW = w * params.topFlatFactor;
     final botW = w * params.bottomFlatFactor;
 
-    // Centraliza o padrão na tela
     final patternW = botW + slopeUpW + topW + slopeDownW + botW;
     final ox = (w - patternW) / 2;
 
-    // Âncoras X
-    final xBotStart = ox;
+    final xBotStart = baseX + ox;
     final xSlopeUp = xBotStart + botW;
     final xTopStart = xSlopeUp + slopeUpW;
     final xSlopeDown = xTopStart + topW;
     final xBotEnd = xSlopeDown + slopeDownW;
     final xExit = xBotEnd + botW;
+    final exitRemaining = baseX + w - xExit;
 
-    // Entrada
-    final seg0 = RoadSegment(
-      Offset(-50, midY),
-      Offset(ox * 0.4, midY),
-      Offset(ox * 0.85, midY),
-      Offset(xBotStart, midY),
-    );
-
-    // Flat inferior (antes da subida)
-    final seg1 = RoadSegment(
-      Offset(xBotStart, midY),
-      Offset(xBotStart + botW * 0.33, midY),
-      Offset(xBotStart + botW * 0.67, midY),
-      Offset(xSlopeUp, midY),
-    );
-
-    // Subida  midY → peakY
-    final seg2 = RoadSegment(
-      Offset(xSlopeUp, midY),
-      Offset(xSlopeUp + slopeUpW * 0.50, midY), // saída horizontal
-      Offset(xTopStart - slopeUpW * 0.15, peakY), // chegada horizontal
-      Offset(xTopStart, peakY),
-    );
-
-    // Flat superior (entre subida e descida)
-    final seg3 = RoadSegment(
-      Offset(xTopStart, peakY),
-      Offset(xTopStart + topW * 0.33, peakY),
-      Offset(xSlopeDown - topW * 0.33, peakY),
-      Offset(xSlopeDown, peakY),
-    );
-
-    // Descida  peakY → midY
-    final seg4 = RoadSegment(
-      Offset(xSlopeDown, peakY),
-      Offset(xSlopeDown + slopeDownW * 0.15, peakY), // saída horizontal
-      Offset(xBotEnd - slopeDownW * 0.50, midY), // chegada horizontal
-      Offset(xBotEnd, midY),
-    );
-
-    // Flat inferior (após descida)
-    final seg5 = RoadSegment(
-      Offset(xBotEnd, midY),
-      Offset(xBotEnd + botW * 0.33, midY),
-      Offset(xBotEnd + botW * 0.67, midY),
-      Offset(xExit, midY),
-    );
-
-    // Saída
-    final seg6 = RoadSegment(
-      Offset(xExit, midY),
-      Offset(xExit + (w - xExit) * 0.30, midY),
-      Offset(xExit + (w - xExit) * 0.75, midY),
-      Offset(w + 50, midY),
-    );
-
-    return [seg0, seg1, seg2, seg3, seg4, seg5, seg6];
+    return [
+      RoadSegment(
+        Offset(baseX - 50, midY),
+        Offset(baseX + ox * 0.4, midY),
+        Offset(baseX + ox * 0.85, midY),
+        Offset(xBotStart, midY),
+      ),
+      RoadSegment(
+        Offset(xBotStart, midY),
+        Offset(xBotStart + botW * 0.33, midY),
+        Offset(xBotStart + botW * 0.67, midY),
+        Offset(xSlopeUp, midY),
+      ),
+      RoadSegment(
+        Offset(xSlopeUp, midY),
+        Offset(xSlopeUp + slopeUpW * 0.50, midY),
+        Offset(xTopStart - slopeUpW * 0.15, peakY),
+        Offset(xTopStart, peakY),
+      ),
+      RoadSegment(
+        Offset(xTopStart, peakY),
+        Offset(xTopStart + topW * 0.33, peakY),
+        Offset(xSlopeDown - topW * 0.33, peakY),
+        Offset(xSlopeDown, peakY),
+      ),
+      RoadSegment(
+        Offset(xSlopeDown, peakY),
+        Offset(xSlopeDown + slopeDownW * 0.15, peakY),
+        Offset(xBotEnd - slopeDownW * 0.50, midY),
+        Offset(xBotEnd, midY),
+      ),
+      RoadSegment(
+        Offset(xBotEnd, midY),
+        Offset(xBotEnd + botW * 0.33, midY),
+        Offset(xBotEnd + botW * 0.67, midY),
+        Offset(xExit, midY),
+      ),
+      RoadSegment(
+        Offset(xExit, midY),
+        Offset(xExit + exitRemaining * 0.30, midY),
+        Offset(xExit + exitRemaining * 0.75, midY),
+        Offset(baseX + w + 50, midY),
+      ),
+    ];
   }
 
-  // ── Amostragem ──────────────────────────────────────────────────────────────
+  // ── Static sampling ─────────────────────────────────────────────────────────
 
-  List<({Offset point, Offset normal})> _sample(List<RoadSegment> segs) {
+  static List<({Offset point, Offset normal})> sampleSegments(
+      List<RoadSegment> segs, int samplesPerSeg) {
     final result = <({Offset point, Offset normal})>[];
     for (int s = 0; s < segs.length; s++) {
       final seg = segs[s];
       final start = s == 0 ? 0 : 1;
-      for (int i = start; i <= samplesPerSegment; i++) {
-        final t = i / samplesPerSegment;
+      for (int i = start; i <= samplesPerSeg; i++) {
+        final t = i / samplesPerSeg;
         final pt = seg.point(t);
         final tan = seg.tangent(t);
         final len = tan.distance;
@@ -134,6 +118,31 @@ class RoadPainter extends CustomPainter {
       }
     }
     return result;
+  }
+
+  /// Road center Y at a given world X position (for scoring).
+  static double computeCenterY({
+    required double worldX,
+    required double screenWidth,
+    required double screenHeight,
+    required RoadParams params,
+  }) {
+    final repIndex = (worldX / screenWidth).floor();
+    final baseX = repIndex * screenWidth;
+    final size = Size(screenWidth, screenHeight);
+    final segs = buildSegmentsForRep(size, params, baseX);
+    final samples = sampleSegments(segs, 40);
+
+    double minDist = double.infinity;
+    double centerY = screenHeight * 0.5;
+    for (final s in samples) {
+      final dist = (s.point.dx - worldX).abs();
+      if (dist < minDist) {
+        minDist = dist;
+        centerY = s.point.dy;
+      }
+    }
+    return centerY;
   }
 
   // ── Path do asfalto ─────────────────────────────────────────────────────────
@@ -246,31 +255,85 @@ class RoadPainter extends CustomPainter {
     }
   }
 
+  // ── Finish line (checkered flag) ────────────────────────────────────────────
+
+  void _drawFinishLine(Canvas canvas, Size size) {
+    final finishX = repetitions * size.width;
+    final midY = size.height * 0.5;
+    final halfRoad = roadWidth / 2;
+
+    const squareSize = 10.0;
+    const columns = 4;
+    final top = midY - halfRoad;
+    final rows = (roadWidth / squareSize).ceil();
+
+    for (int row = 0; row < rows; row++) {
+      for (int col = 0; col < columns; col++) {
+        final isWhite = (row + col) % 2 == 0;
+        canvas.drawRect(
+          Rect.fromLTWH(
+            finishX - columns * squareSize / 2 + col * squareSize,
+            top + row * squareSize,
+            squareSize,
+            squareSize,
+          ),
+          Paint()..color = isWhite ? Colors.white : Colors.black,
+        );
+      }
+    }
+
+    canvas.drawLine(
+      Offset(finishX, top - 20),
+      Offset(finishX, top + roadWidth + 20),
+      Paint()
+        ..color = Colors.white
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3,
+    );
+  }
+
   // ── paint ───────────────────────────────────────────────────────────────────
 
   @override
   void paint(Canvas canvas, Size size) {
-    final segments = _buildSegments(size);
-    final samples = _sample(segments);
-    if (samples.isEmpty) return;
-
-    final halfRoad = roadWidth / 2;
-    final halfShoulder = halfRoad + shoulderWidth;
-
+    // Background
     canvas.drawRect(
         Offset.zero & size,
-        // Paint()..color = Color.fromARGB(255, 31, 31, 31));
         Paint()
           ..color = HSVColor.lerp(
                   HSVColor.fromColor(const Color(0xFF1F1F1F)),
                   HSVColor.fromColor(const Color(0xFF2C2C2C)),
                   params.peakHeightFactor)!
               .toColor());
-    _drawKerbs(canvas, samples, halfRoad, halfShoulder);
-    canvas.drawPath(_buildRoadPath(samples, halfRoad),
-        Paint()..color = const Color(0xFF2C2C2C));
-    if (showCenterLine) _drawCenterLine(canvas, samples);
-    if (showDebugNormals) _drawDebugNormals(canvas, samples);
+
+    canvas.save();
+    canvas.clipRect(Offset.zero & size);
+    canvas.translate(-offsetX, 0);
+
+    // Only draw visible repetitions
+    final firstVisible = max(0, (offsetX / size.width).floor() - 1);
+    final lastVisible =
+        min(repetitions - 1, ((offsetX + size.width) / size.width).ceil());
+
+    for (int rep = firstVisible; rep <= lastVisible; rep++) {
+      final segments =
+          buildSegmentsForRep(size, params, rep * size.width);
+      final samples = sampleSegments(segments, samplesPerSegment);
+      if (samples.isEmpty) continue;
+
+      final halfRoad = roadWidth / 2;
+      final halfShoulder = halfRoad + shoulderWidth;
+
+      _drawKerbs(canvas, samples, halfRoad, halfShoulder);
+      canvas.drawPath(_buildRoadPath(samples, halfRoad),
+          Paint()..color = const Color(0xFF2C2C2C));
+      if (showCenterLine) _drawCenterLine(canvas, samples);
+      if (showDebugNormals) _drawDebugNormals(canvas, samples);
+    }
+
+    _drawFinishLine(canvas, size);
+
+    canvas.restore();
   }
 
   @override
@@ -278,5 +341,7 @@ class RoadPainter extends CustomPainter {
       old.params != params ||
       old.roadWidth != roadWidth ||
       old.showCenterLine != showCenterLine ||
-      old.showDebugNormals != showDebugNormals;
+      old.showDebugNormals != showDebugNormals ||
+      old.offsetX != offsetX ||
+      old.repetitions != repetitions;
 }
