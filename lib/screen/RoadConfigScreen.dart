@@ -7,6 +7,16 @@ import 'package:zoltraak_app/widgets/RoadConfigWidget.dart';
 import 'package:zoltraak_app/widgets/RoadConfigSlider.dart';
 import 'package:zoltraak_app/widgets/PlayerWidget.dart';
 
+double mapValue(
+  double value,
+  double inMin,
+  double inMax,
+  double outMin,
+  double outMax,
+) {
+  return (value - inMin) * (outMax - outMin) / (inMax - inMin) + outMin;
+}
+
 class WaveformSettingsWidget extends StatefulWidget {
   const WaveformSettingsWidget({super.key});
   @override
@@ -23,7 +33,7 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
 
   // Game settings
   int _repetitions = 3;
-  double _gameDuration = 30; // seconds
+  double _gameDuration = 30; // seconds (derived from reps)
   double _speed = 150; // pixels per second
 
   // Game state
@@ -34,8 +44,8 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
   bool _gameOver = false;
 
   // Player position (lifted from PlayerWidget)
-  double _playerWidthPos = 0.5;
-  double _playerHeightPos = 0.5;
+  double _playerWidthPos = 0.02;
+  double _playerHeightPos = 0.837;
 
   // Canvas size for scoring
   Size _canvasSize = Size.zero;
@@ -43,16 +53,29 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
   late Ticker _ticker;
   Duration _lastTickTime = Duration.zero;
 
+  double get _repWidth {
+    if (_canvasSize.width <= 0) return 300;
+    return RoadPainter.computeRepWidth(_canvasSize.width, _params);
+  }
+
+  double get _totalLength => _repetitions * _repWidth;
+
+  void _syncDurationFromReps() {
+    if (_speed > 0) {
+      _gameDuration = _totalLength / _speed;
+    }
+  }
+
+  void _syncRepsFromDuration() {
+    if (_repWidth > 0 && _speed > 0) {
+      _repetitions = max(1, (_gameDuration * _speed / _repWidth).round());
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     _ticker = createTicker(_onTick);
-  }
-
-  int get _effectiveReps {
-    if (_canvasSize.width <= 0) return _repetitions;
-    final timeReps = (_gameDuration * _speed / _canvasSize.width).ceil();
-    return max(_repetitions, timeReps);
   }
 
   void _onTick(Duration elapsed) {
@@ -78,8 +101,7 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
       }
 
       if (_canvasSize.width > 0) {
-        final totalLength = _effectiveReps * _canvasSize.width;
-        if (_offsetX >= totalLength) {
+        if (_offsetX >= _totalLength) {
           _endGame();
           return;
         }
@@ -104,6 +126,9 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
 
     final halfRoad = _roadWidth / 2;
     final distFromCenter = (playerScreenY - centerY).abs();
+    setState(() {
+      _playerHeightPos = mapValue(centerY, 25, _canvasSize.height - 25, 0, 1);
+    });
 
     if (distFromCenter <= halfRoad) {
       // On track: closer to center = faster points
@@ -144,8 +169,8 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
       _offsetX = 0;
       _elapsedSeconds = 0;
       _score = 0;
-      _playerWidthPos = 0.5;
-      _playerHeightPos = 0.5;
+      // _playerWidthPos = 0.5;
+      // _playerHeightPos = 0.5;
       if (_ticker.isActive) _ticker.stop();
       _lastTickTime = Duration.zero;
     });
@@ -195,10 +220,10 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
       body: Column(
         children: [
           Expanded(
+            flex: 2,
             child: LayoutBuilder(
               builder: (context, constraints) {
                 _canvasSize = constraints.biggest;
-                final effectiveReps = _effectiveReps;
                 return Stack(
                   children: [
                     CustomPaint(
@@ -209,7 +234,7 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
                         showCenterLine: _showCenter,
                         showDebugNormals: _showNormals,
                         shoulderWidth: 1,
-                        repetitions: effectiveReps,
+                        repetitions: _repetitions,
                       ),
                       child: const SizedBox.expand(),
                     ),
@@ -219,8 +244,8 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
                       heightPosition: _playerHeightPos,
                       onPositionChanged: (wPos, hPos) {
                         setState(() {
-                          _playerWidthPos = wPos;
-                          _playerHeightPos = hPos;
+                          // _playerWidthPos = wPos;
+                          // _playerHeightPos = hPos;
                         });
                       },
                     ),
@@ -299,14 +324,30 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
               },
             ),
           ),
-          // Game settings sliders
-          _buildGameSliders(),
-          // Road parameter sliders
-          WaveformWidget(
-            params: _params,
-            roadWidth: _roadWidth,
-            onParamsChanged: (p) => setState(() => _params = p),
-            onRoadWidthChanged: (v) => setState(() => _roadWidth = v),
+          Expanded(
+            flex: 1,
+            child: Scrollable(viewportBuilder: (context, offset) {
+              return SingleChildScrollView(
+                controller: ScrollController(),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Game settings sliders
+                    _buildGameSliders(),
+                    // Road parameter sliders
+                    WaveformWidget(
+                      params: _params,
+                      roadWidth: _roadWidth,
+                      onParamsChanged: (p) => setState(() {
+                        _params = p;
+                        _syncDurationFromReps();
+                      }),
+                      onRoadWidthChanged: (v) => setState(() => _roadWidth = v),
+                    ),
+                  ],
+                ),
+              );
+            }),
           ),
         ],
       ),
@@ -334,27 +375,36 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
             max: 500,
             display: '${_speed.round()} px/s',
             color: Colors.tealAccent,
-            onChanged: (v) => setState(() => _speed = v),
+            onChanged: (v) => setState(() {
+              _speed = v;
+              _syncDurationFromReps();
+            }),
           ),
           WaveformSlider(
             label: 'Tempo',
             hint: '(segundos)',
-            value: _gameDuration,
-            min: 5,
-            max: 120,
-            display: '${_gameDuration.round()}s',
+            value: _gameDuration.clamp(0.1, 600),
+            min: 0.1,
+            max: 600,
+            display: '${_gameDuration.toStringAsFixed(1)}s',
             color: Colors.amberAccent,
-            onChanged: (v) => setState(() => _gameDuration = v),
+            onChanged: (v) => setState(() {
+              _gameDuration = v;
+              _syncRepsFromDuration();
+            }),
           ),
           WaveformSlider(
             label: 'Repeticoes',
             hint: '',
-            value: _repetitions.toDouble(),
+            value: _repetitions.toDouble().clamp(1, 100),
             min: 1,
-            max: 20,
+            max: 100,
             display: '${_repetitions}x',
             color: Colors.purpleAccent,
-            onChanged: (v) => setState(() => _repetitions = v.round()),
+            onChanged: (v) => setState(() {
+              _repetitions = v.round();
+              _syncDurationFromReps();
+            }),
           ),
         ],
       ),

@@ -26,8 +26,7 @@ class PlayerWidget extends StatelessWidget {
         onPositionChanged?.call(wPos, hPos);
       },
       child: Align(
-        alignment: Alignment(
-            widthPosition * 2 - 1, heightPosition * 2 - 1),
+        alignment: Alignment(widthPosition * 2 - 1, heightPosition * 2 - 1),
         child: Container(
           width: iconSize.width,
           height: iconSize.height,

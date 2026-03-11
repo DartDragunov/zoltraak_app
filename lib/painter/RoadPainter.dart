@@ -28,73 +28,71 @@ class RoadPainter extends CustomPainter {
     this.repetitions = 1,
   });
 
-  // ── Build segments for one repetition at baseX offset ───────────────────────
+  // ── Width of one repetition cycle in pixels ─────────────────────────────────
+  //
+  // Layout per rep:
+  //   bottomFlat (gap) | SUBIDA | topFlat | DESCIDA
+  //
+  // bottomFlat is the separator between the previous descent and this ascent.
+
+  static double computeRepWidth(double screenW, RoadParams params) {
+    return screenW *
+        (params.bottomFlatFactor +
+            params.slopeUpWidthFactor +
+            params.topFlatFactor +
+            params.slopeDownWidthFactor);
+  }
+
+  static double computeTotalLength(
+      double screenW, RoadParams params, int reps) {
+    return reps * computeRepWidth(screenW, params);
+  }
+
+  // ── Build segments for one repetition at repStartX ──────────────────────────
 
   static List<RoadSegment> buildSegmentsForRep(
-      Size size, RoadParams params, double baseX) {
-    final w = size.width;
-    final h = size.height;
+      double screenW, double screenH, RoadParams params, double repStartX) {
+    final midY = screenH * params.baselineYFactor;
+    final peakY = screenH * params.peakHeightFactor;
+    final botW = screenW * params.bottomFlatFactor;
+    final slopeUpW = screenW * params.slopeUpWidthFactor;
+    final topW = screenW * params.topFlatFactor;
+    final slopeDownW = screenW * params.slopeDownWidthFactor;
 
-    final midY = h * 0.5;
-    final peakY = h * params.peakHeightFactor;
-    final slopeUpW = w * params.slopeUpWidthFactor;
-    final slopeDownW = w * params.slopeDownWidthFactor;
-    final topW = w * params.topFlatFactor;
-    final botW = w * params.bottomFlatFactor;
-
-    final patternW = botW + slopeUpW + topW + slopeDownW + botW;
-    final ox = (w - patternW) / 2;
-
-    final xBotStart = baseX + ox;
-    final xSlopeUp = xBotStart + botW;
-    final xTopStart = xSlopeUp + slopeUpW;
-    final xSlopeDown = xTopStart + topW;
-    final xBotEnd = xSlopeDown + slopeDownW;
-    final xExit = xBotEnd + botW;
-    final exitRemaining = baseX + w - xExit;
+    final x0 = repStartX;
+    final x1 = x0 + botW; // end of flat gap
+    final x2 = x1 + slopeUpW; // end of ascent
+    final x3 = x2 + topW; // end of flat top
+    final x4 = x3 + slopeDownW; // end of descent
 
     return [
+      // Flat bottom (gap / separator before this ramp)
       RoadSegment(
-        Offset(baseX - 50, midY),
-        Offset(baseX + ox * 0.4, midY),
-        Offset(baseX + ox * 0.85, midY),
-        Offset(xBotStart, midY),
+        Offset(x0, midY),
+        Offset(x0 + botW * 0.33, midY),
+        Offset(x1 - botW * 0.33, midY),
+        Offset(x1, midY),
       ),
+      // Ascent (midY → peakY)
       RoadSegment(
-        Offset(xBotStart, midY),
-        Offset(xBotStart + botW * 0.33, midY),
-        Offset(xBotStart + botW * 0.67, midY),
-        Offset(xSlopeUp, midY),
+        Offset(x1, midY),
+        Offset(x1 + slopeUpW * 0.50, midY),
+        Offset(x2 - slopeUpW * 0.15, peakY),
+        Offset(x2, peakY),
       ),
+      // Flat top
       RoadSegment(
-        Offset(xSlopeUp, midY),
-        Offset(xSlopeUp + slopeUpW * 0.50, midY),
-        Offset(xTopStart - slopeUpW * 0.15, peakY),
-        Offset(xTopStart, peakY),
+        Offset(x2, peakY),
+        Offset(x2 + topW * 0.33, peakY),
+        Offset(x3 - topW * 0.33, peakY),
+        Offset(x3, peakY),
       ),
+      // Descent (peakY → midY)
       RoadSegment(
-        Offset(xTopStart, peakY),
-        Offset(xTopStart + topW * 0.33, peakY),
-        Offset(xSlopeDown - topW * 0.33, peakY),
-        Offset(xSlopeDown, peakY),
-      ),
-      RoadSegment(
-        Offset(xSlopeDown, peakY),
-        Offset(xSlopeDown + slopeDownW * 0.15, peakY),
-        Offset(xBotEnd - slopeDownW * 0.50, midY),
-        Offset(xBotEnd, midY),
-      ),
-      RoadSegment(
-        Offset(xBotEnd, midY),
-        Offset(xBotEnd + botW * 0.33, midY),
-        Offset(xBotEnd + botW * 0.67, midY),
-        Offset(xExit, midY),
-      ),
-      RoadSegment(
-        Offset(xExit, midY),
-        Offset(xExit + exitRemaining * 0.30, midY),
-        Offset(xExit + exitRemaining * 0.75, midY),
-        Offset(baseX + w + 50, midY),
+        Offset(x3, peakY),
+        Offset(x3 + slopeDownW * 0.15, peakY),
+        Offset(x4 - slopeDownW * 0.50, midY),
+        Offset(x4, midY),
       ),
     ];
   }
@@ -127,14 +125,17 @@ class RoadPainter extends CustomPainter {
     required double screenHeight,
     required RoadParams params,
   }) {
-    final repIndex = (worldX / screenWidth).floor();
-    final baseX = repIndex * screenWidth;
-    final size = Size(screenWidth, screenHeight);
-    final segs = buildSegmentsForRep(size, params, baseX);
+    final repW = computeRepWidth(screenWidth, params);
+    if (repW <= 0) return screenHeight * params.baselineYFactor;
+
+    final repIndex = (worldX / repW).floor().clamp(0, 9999);
+    final repStartX = repIndex * repW;
+    final segs =
+        buildSegmentsForRep(screenWidth, screenHeight, params, repStartX);
     final samples = sampleSegments(segs, 40);
 
     double minDist = double.infinity;
-    double centerY = screenHeight * 0.5;
+    double centerY = screenHeight * params.baselineYFactor;
     for (final s in samples) {
       final dist = (s.point.dx - worldX).abs();
       if (dist < minDist) {
@@ -258,8 +259,9 @@ class RoadPainter extends CustomPainter {
   // ── Finish line (checkered flag) ────────────────────────────────────────────
 
   void _drawFinishLine(Canvas canvas, Size size) {
-    final finishX = repetitions * size.width;
-    final midY = size.height * 0.5;
+    final repW = computeRepWidth(size.width, params);
+    final finishX = repetitions * repW;
+    final midY = size.height * params.baselineYFactor;
     final halfRoad = roadWidth / 2;
 
     const squareSize = 10.0;
@@ -310,14 +312,17 @@ class RoadPainter extends CustomPainter {
     canvas.clipRect(Offset.zero & size);
     canvas.translate(-offsetX, 0);
 
+    final repW = computeRepWidth(size.width, params);
+
     // Only draw visible repetitions
-    final firstVisible = max(0, (offsetX / size.width).floor() - 1);
-    final lastVisible =
-        min(repetitions - 1, ((offsetX + size.width) / size.width).ceil());
+    final firstVisible = repW > 0 ? max(0, (offsetX / repW).floor() - 1) : 0;
+    final lastVisible = repW > 0
+        ? min(repetitions - 1, ((offsetX + size.width) / repW).ceil())
+        : 0;
 
     for (int rep = firstVisible; rep <= lastVisible; rep++) {
       final segments =
-          buildSegmentsForRep(size, params, rep * size.width);
+          buildSegmentsForRep(size.width, size.height, params, rep * repW);
       final samples = sampleSegments(segments, samplesPerSegment);
       if (samples.isEmpty) continue;
 
