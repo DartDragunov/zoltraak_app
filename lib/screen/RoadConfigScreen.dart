@@ -50,6 +50,11 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
   // Canvas size for scoring
   Size _canvasSize = Size.zero;
 
+  // Car angle physics (drift effect)
+  double _roadAngle = 0;
+  double _carAngle = 0;
+  double _carAngularVel = 0;
+
   late Ticker _ticker;
   Duration _lastTickTime = Duration.zero;
 
@@ -106,6 +111,7 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
           return;
         }
         _updateScore(dt);
+        _updateCarAngle(dt);
       }
     });
   }
@@ -142,6 +148,25 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
     }
   }
 
+  void _updateCarAngle(double dt) {
+    final playerScreenX = _playerWidthPos * _canvasSize.width;
+    final worldX = playerScreenX + _offsetX;
+
+    _roadAngle = RoadPainter.computeTangentAngle(
+      worldX: worldX,
+      screenWidth: _canvasSize.width,
+      screenHeight: _canvasSize.height,
+      params: _params,
+    );
+
+    // Spring-damper: smooth car angle with overshoot for drift feel
+    const springK = 25.0;
+    const damping = 7.0;
+    final force = (_roadAngle - _carAngle) * springK - _carAngularVel * damping;
+    _carAngularVel += force * dt;
+    _carAngle += _carAngularVel * dt;
+  }
+
   void _endGame() {
     _gameOver = true;
     _isRunning = false;
@@ -169,6 +194,9 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
       _offsetX = 0;
       _elapsedSeconds = 0;
       _score = 0;
+      _roadAngle = 0;
+      _carAngle = 0;
+      _carAngularVel = 0;
       // _playerWidthPos = 0.5;
       // _playerHeightPos = 0.5;
       if (_ticker.isActive) _ticker.stop();
@@ -242,6 +270,8 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
                       size: constraints.biggest,
                       widthPosition: _playerWidthPos,
                       heightPosition: _playerHeightPos,
+                      roadAngle: _carAngle,
+                      driftAngle: _roadAngle - _carAngle,
                       onPositionChanged: (wPos, hPos) {
                         setState(() {
                           // _playerWidthPos = wPos;

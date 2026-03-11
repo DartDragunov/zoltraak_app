@@ -146,6 +146,40 @@ class RoadPainter extends CustomPainter {
     return centerY;
   }
 
+  /// Road tangent angle (radians) at a given world X position.
+  static double computeTangentAngle({
+    required double worldX,
+    required double screenWidth,
+    required double screenHeight,
+    required RoadParams params,
+  }) {
+    final repW = computeRepWidth(screenWidth, params);
+    if (repW <= 0) return 0;
+
+    final repIndex = (worldX / repW).floor().clamp(0, 9999);
+    final repStartX = repIndex * repW;
+    final segs =
+        buildSegmentsForRep(screenWidth, screenHeight, params, repStartX);
+    final samples = sampleSegments(segs, 60);
+    if (samples.length < 2) return 0;
+
+    double minDist = double.infinity;
+    int closestIdx = 0;
+    for (int i = 0; i < samples.length; i++) {
+      final dist = (samples[i].point.dx - worldX).abs();
+      if (dist < minDist) {
+        minDist = dist;
+        closestIdx = i;
+      }
+    }
+
+    final i0 = max(0, closestIdx - 1);
+    final i1 = min(samples.length - 1, closestIdx + 1);
+    final p0 = samples[i0].point;
+    final p1 = samples[i1].point;
+    return atan2(p1.dy - p0.dy, p1.dx - p0.dx);
+  }
+
   // ── Path do asfalto ─────────────────────────────────────────────────────────
 
   Path _buildRoadPath(
