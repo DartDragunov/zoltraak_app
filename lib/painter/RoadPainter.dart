@@ -276,6 +276,87 @@ class RoadPainter extends CustomPainter {
     canvas.drawPath(path, paint);
   }
 
+  // ── Scoring zone debug lines ────────────────────────────────────────────────
+
+  void _drawScoringZones(
+      Canvas canvas, List<({Offset point, Offset normal})> samples) {
+    final topPaint = Paint()
+      ..color = Colors.greenAccent.withOpacity(0.5)
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+    final midPaint = Paint()
+      ..color = Colors.yellowAccent.withOpacity(0.4)
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke;
+    final outPaint = Paint()
+      ..color = Colors.redAccent.withOpacity(0.5)
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke;
+
+    final halfRoad = roadWidth / 2;
+
+    final topPath = Path();
+    final midPath = Path();
+    final botPath = Path();
+    final topPathR = Path();
+    final midPathR = Path();
+    final botPathR = Path();
+
+    for (int i = 0; i < samples.length; i++) {
+      final s = samples[i];
+      // Compute local tangent angle for effective half road
+      Offset tan = Offset(1, 0);
+      if (i < samples.length - 1) {
+        tan = samples[i + 1].point - s.point;
+      } else if (i > 0) {
+        tan = s.point - samples[i - 1].point;
+      }
+      final angle = atan2(tan.dy, tan.dx);
+      final cosA = cos(angle).abs().clamp(0.1, 1.0);
+      final effHalf = halfRoad / cosA;
+
+      // Vertical offset lines at 100%, 50%, and beyond road edge
+      final cy = s.point.dy;
+      final x = s.point.dx;
+
+      // Edge of scoring zone (effectiveHalfRoad)
+      final edgeTop = Offset(x, cy - effHalf);
+      final edgeBot = Offset(x, cy + effHalf);
+      // 50% scoring band
+      final midTop = Offset(x, cy - effHalf * 0.5);
+      final midBot = Offset(x, cy + effHalf * 0.5);
+      // Beyond road (penalty starts)
+      final outTop = Offset(x, cy - effHalf - 20);
+      final outBot = Offset(x, cy + effHalf + 20);
+
+      if (i == 0) {
+        topPath.moveTo(edgeTop.dx, edgeTop.dy);
+        botPath.moveTo(edgeBot.dx, edgeBot.dy);
+        midPath.moveTo(midTop.dx, midTop.dy);
+        midPathR.moveTo(midBot.dx, midBot.dy);
+        topPathR.moveTo(outTop.dx, outTop.dy);
+        botPathR.moveTo(outBot.dx, outBot.dy);
+      } else {
+        topPath.lineTo(edgeTop.dx, edgeTop.dy);
+        botPath.lineTo(edgeBot.dx, edgeBot.dy);
+        midPath.lineTo(midTop.dx, midTop.dy);
+        midPathR.lineTo(midBot.dx, midBot.dy);
+        topPathR.lineTo(outTop.dx, outTop.dy);
+        botPathR.lineTo(outBot.dx, outBot.dy);
+      }
+    }
+
+    // Green: road edge (scoring boundary)
+    canvas.drawPath(topPath, topPaint);
+    canvas.drawPath(botPath, topPaint);
+    // Yellow: 50% scoring band
+    canvas.drawPath(midPath, midPaint);
+    canvas.drawPath(midPathR, midPaint);
+    // Red: penalty zone outer edge
+    canvas.drawPath(topPathR, outPaint);
+    canvas.drawPath(botPathR, outPaint);
+  }
+
   // ── Normais de debug ────────────────────────────────────────────────────────
 
   void _drawDebugNormals(
@@ -367,7 +448,10 @@ class RoadPainter extends CustomPainter {
       canvas.drawPath(_buildRoadPath(samples, halfRoad),
           Paint()..color = const Color(0xFF2C2C2C));
       if (showCenterLine) _drawCenterLine(canvas, samples);
-      if (showDebugNormals) _drawDebugNormals(canvas, samples);
+      if (showDebugNormals) {
+        _drawDebugNormals(canvas, samples);
+        _drawScoringZones(canvas, samples);
+      }
     }
 
     _drawFinishLine(canvas, size);

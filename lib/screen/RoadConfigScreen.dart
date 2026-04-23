@@ -36,6 +36,9 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
   double _gameDuration = 30; // seconds (derived from reps)
   double _speed = 150; // pixels per second
 
+  // Player control mode
+  bool _manualControl = true;
+
   // Game state
   bool _isRunning = false;
   double _offsetX = 0;
@@ -54,6 +57,17 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
   double _roadAngle = 0;
   double _carAngle = 0;
   double _carAngularVel = 0;
+
+  // Drag-based drift
+  double _dragAngle = 0;
+  bool _isDragging = false;
+  double _prevDragHeightPos = 0.837;
+  double _prevDragWidthPos = 0.02;
+
+  // Movement tracking for tilt
+  double _prevWorldX = 0;
+  double _prevScreenY = 0;
+  double _movementAngle = 0;
 
   late Ticker _ticker;
   Duration _lastTickTime = Duration.zero;
@@ -119,8 +133,13 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
   void _updateScore(double dt) {
     if (_canvasSize == Size.zero) return;
 
-    final playerScreenX = _playerWidthPos * _canvasSize.width;
-    final playerScreenY = _playerHeightPos * _canvasSize.height;
+    // Car visual size (must match PlayerWidget CustomPaint size)
+    const carW = 52.0;
+    const carH = 26.0;
+
+    // Align widget maps position to screen like this:
+    final playerScreenX =
+        (_canvasSize.width - carW) * _playerWidthPos + carW / 2;
     final worldX = playerScreenX + _offsetX;
 
     final centerY = RoadPainter.computeCenterY(
@@ -130,39 +149,71 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
       params: _params,
     );
 
-    final halfRoad = _roadWidth / 2;
-    final distFromCenter = (playerScreenY - centerY).abs();
-    setState(() {
-      _playerHeightPos = mapValue(centerY, 25, _canvasSize.height - 25, 0, 1);
-    });
+    if (!_manualControl) {
+      // Inverse of the Align formula: hPos = (centerY - carH/2) / (canvasH - carH)
+      _playerHeightPos = (centerY - carH / 2) / (_canvasSize.height - carH);
+    }
 
-    if (distFromCenter <= halfRoad) {
-      // On track: closer to center = faster points
-      final centerRatio = 1.0 - (distFromCenter / halfRoad);
+    final actualScreenY =
+        (_canvasSize.height - carH) * _playerHeightPos + carH / 2;
+    final verticalDist = (actualScreenY - centerY).abs();
+
+    // Road width is perpendicular to tangent; on slopes the vertical span is wider
+    final angle = RoadPainter.computeTangentAngle(
+      worldX: worldX,
+      screenWidth: _canvasSize.width,
+      screenHeight: _canvasSize.height,
+      params: _params,
+    );
+    final cosAngle = cos(angle).abs().clamp(0.1, 1.0);
+    final effectiveHalfRoad = (_roadWidth / 2) / cosAngle;
+
+    if (verticalDist <= effectiveHalfRoad) {
+      final centerRatio = 1.0 - (verticalDist / effectiveHalfRoad);
       _score += 100 * centerRatio * dt;
     } else {
-      // Off track: lose points, faster the further out
-      final offDistance = distFromCenter - halfRoad;
+      final offDistance = verticalDist - effectiveHalfRoad;
       _score -= (50 + offDistance * 2) * dt;
       if (_score < 0) _score = 0;
     }
   }
 
   void _updateCarAngle(double dt) {
-    final playerScreenX = _playerWidthPos * _canvasSize.width;
+    const carW = 52.0;
+    const carH = 26.0;
+    final playerScreenX =
+        (_canvasSize.width - carW) * _playerWidthPos + carW / 2;
+    final playerScreenY =
+        (_canvasSize.height - carH) * _playerHeightPos + carH / 2;
     final worldX = playerScreenX + _offsetX;
 
-    _roadAngle = RoadPainter.computeTangentAngle(
-      worldX: worldX,
-      screenWidth: _canvasSize.width,
-      screenHeight: _canvasSize.height,
-      params: _params,
-    );
+    // Compute movement angle from actual position delta (oldPoint -> newPoint)
+    final dx = worldX - _prevWorldX;
+    final dy = playerScreenY - _prevScreenY;
+    if (dx * dx + dy * dy > 0.5) {
+      _movementAngle = atan2(dy, dx);
+    }
+    _prevWorldX = worldX;
+    _prevScreenY = playerScreenY;
+
+    if (_manualControl) {
+      _roadAngle = _movementAngle;
+    } else {
+      _roadAngle = RoadPainter.computeTangentAngle(
+        worldX: worldX,
+        screenWidth: _canvasSize.width,
+        screenHeight: _canvasSize.height,
+        params: _params,
+      );
+    }
+
+    final targetAngle = _roadAngle;
 
     // Spring-damper: smooth car angle with overshoot for drift feel
     const springK = 25.0;
     const damping = 7.0;
-    final force = (_roadAngle - _carAngle) * springK - _carAngularVel * damping;
+    final force =
+        (targetAngle - _carAngle) * springK - _carAngularVel * damping;
     _carAngularVel += force * dt;
     _carAngle += _carAngularVel * dt;
   }
@@ -197,6 +248,13 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
       _roadAngle = 0;
       _carAngle = 0;
       _carAngularVel = 0;
+      _dragAngle = 0;
+      _isDragging = false;
+      _movementAngle = 0;
+      _prevWorldX = 0;
+      _prevScreenY = _playerHeightPos * _canvasSize.height;
+      _prevDragHeightPos = _playerHeightPos;
+      _prevDragWidthPos = _playerWidthPos;
       // _playerWidthPos = 0.5;
       // _playerHeightPos = 0.5;
       if (_ticker.isActive) _ticker.stop();
@@ -230,6 +288,13 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
             color: _showCenter ? Colors.yellow : Colors.white38,
             tooltip: 'Linha central',
             onPressed: () => setState(() => _showCenter = !_showCenter),
+          ),
+          IconButton(
+            icon: Icon(_manualControl ? Icons.sports_esports : Icons.auto_mode),
+            color:
+                _manualControl ? Colors.orangeAccent : Colors.lightBlueAccent,
+            tooltip: _manualControl ? 'Manual' : 'Auto',
+            onPressed: () => setState(() => _manualControl = !_manualControl),
           ),
           IconButton(
             icon: Icon(_isRunning ? Icons.pause : Icons.play_arrow),
@@ -271,13 +336,34 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
                       widthPosition: _playerWidthPos,
                       heightPosition: _playerHeightPos,
                       roadAngle: _carAngle,
-                      driftAngle: _roadAngle - _carAngle,
-                      onPositionChanged: (wPos, hPos) {
-                        setState(() {
-                          // _playerWidthPos = wPos;
-                          // _playerHeightPos = hPos;
-                        });
-                      },
+                      showDebug: _showNormals,
+                      driftAngle: _manualControl && _isDragging
+                          ? (_dragAngle - _carAngle)
+                          : (_roadAngle - _carAngle),
+                      onPositionChanged: _manualControl
+                          ? (wPos, hPos) {
+                              setState(() {
+                                final dx = (wPos - _prevDragWidthPos) *
+                                    _canvasSize.width;
+                                final dy = (hPos - _prevDragHeightPos) *
+                                    _canvasSize.height;
+                                if (dx * dx + dy * dy > 1) {
+                                  _dragAngle = atan2(dy, dx);
+                                  _isDragging = true;
+                                }
+                                _prevDragWidthPos = wPos;
+                                _prevDragHeightPos = hPos;
+                                _playerHeightPos = hPos;
+                              });
+                            }
+                          : null,
+                      onDragEnd: _manualControl
+                          ? () {
+                              setState(() {
+                                _isDragging = false;
+                              });
+                            }
+                          : null,
                     ),
                     // Score & timer overlay
                     Positioned(

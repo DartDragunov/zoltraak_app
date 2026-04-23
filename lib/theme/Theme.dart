@@ -77,11 +77,11 @@ class Themes {
         titleMedium: TextStyle(color: scheme.onSurface),
       ),
       iconTheme: IconThemeData(color: scheme.onSurfaceVariant),
-      cardTheme: CardTheme(
-        color: surfaceColor,
-        elevation: 1,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
+      // cardTheme: CardTheme(
+      //   color: surfaceColor,
+      //   elevation: 1,
+      //   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      // ),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: scheme.primary,

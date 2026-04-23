@@ -6,7 +6,9 @@ class PlayerWidget extends StatelessWidget {
   final double heightPosition;
   final double roadAngle;
   final double driftAngle;
+  final bool showDebug;
   final void Function(double widthPos, double heightPos)? onPositionChanged;
+  final VoidCallback? onDragEnd;
 
   const PlayerWidget({
     super.key,
@@ -15,7 +17,9 @@ class PlayerWidget extends StatelessWidget {
     required this.heightPosition,
     this.roadAngle = 0,
     this.driftAngle = 0,
+    this.showDebug = false,
     this.onPositionChanged,
+    this.onDragEnd,
   });
 
   @override
@@ -28,13 +32,14 @@ class PlayerWidget extends StatelessWidget {
         final hPos = (details.localPosition.dy / size.height).clamp(0.0, 1.0);
         onPositionChanged?.call(wPos, hPos);
       },
+      onPanEnd: (_) => onDragEnd?.call(),
       child: Align(
         alignment: Alignment(widthPosition * 2 - 1, heightPosition * 2 - 1),
         child: Transform.rotate(
           angle: roadAngle,
           child: CustomPaint(
             size: const Size(52, 26),
-            painter: _CarPainter(isDrifting: isDrifting),
+            painter: _CarPainter(isDrifting: isDrifting, showDebug: showDebug),
           ),
         ),
       ),
@@ -44,8 +49,9 @@ class PlayerWidget extends StatelessWidget {
 
 class _CarPainter extends CustomPainter {
   final bool isDrifting;
+  final bool showDebug;
 
-  _CarPainter({this.isDrifting = false});
+  _CarPainter({this.isDrifting = false, this.showDebug = false});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -190,8 +196,28 @@ class _CarPainter extends CustomPainter {
       canvas.drawCircle(Offset(w * -0.06, h * 0.76), 3, smokePaint);
       canvas.drawCircle(Offset(w * -0.10, h * 0.62), 4, smokePaint);
     }
+
+    // Debug hitbox circle
+    if (showDebug) {
+      canvas.drawCircle(
+        Offset(w * 0.5, h * 0.5),
+        6,
+        Paint()
+          ..color = Colors.cyanAccent
+          ..style = PaintingStyle.fill,
+      );
+      canvas.drawCircle(
+        Offset(w * 0.5, h * 0.5),
+        6,
+        Paint()
+          ..color = Colors.white
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+    }
   }
 
   @override
-  bool shouldRepaint(_CarPainter old) => old.isDrifting != isDrifting;
+  bool shouldRepaint(_CarPainter old) =>
+      old.isDrifting != isDrifting || old.showDebug != showDebug;
 }
