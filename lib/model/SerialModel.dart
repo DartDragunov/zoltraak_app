@@ -70,6 +70,7 @@ class SerialModel extends ChangeNotifier {
   ]));
 
   // Packet framing constants
+  // ignore: unused_field
   static const _header = [0x5A, 0xA5];
   static const _tail = [0xCC, 0x33, 0xC3, 0x3C];
 

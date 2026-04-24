@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'dart:math';
 import 'package:zoltraak_app/model/RoadParams.dart';
+import 'package:zoltraak_app/model/SavedMode.dart';
+import 'package:zoltraak_app/notifier/SavedModesNotifier.dart';
 import 'package:zoltraak_app/painter/RoadPainter.dart';
 import 'package:zoltraak_app/widgets/RoadConfigWidget.dart';
 import 'package:zoltraak_app/widgets/RoadConfigSlider.dart';
@@ -278,6 +280,12 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
         foregroundColor: Colors.white,
         actions: [
           IconButton(
+            icon: const Icon(Icons.bookmark_add),
+            color: Colors.amberAccent,
+            tooltip: 'Salvar modo',
+            onPressed: _showSaveDialog,
+          ),
+          IconButton(
             icon: const Icon(Icons.grid_4x4),
             color: _showNormals ? Colors.cyanAccent : Colors.white38,
             tooltip: 'Debug normais',
@@ -468,6 +476,63 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
         ],
       ),
     );
+  }
+
+  Future<void> _showSaveDialog() async {
+    final controller = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        title: const Text('Salvar modo', style: TextStyle(color: Colors.white)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: 'Nome do modo',
+            hintStyle: TextStyle(color: Colors.white38),
+            enabledBorder: UnderlineInputBorder(
+                borderSide: BorderSide(color: Colors.white24)),
+            focusedBorder: UnderlineInputBorder(
+                borderSide: BorderSide(color: Colors.amberAccent)),
+          ),
+          onSubmitted: (_) => Navigator.of(ctx).pop(true),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child:
+                const Text('Cancelar', style: TextStyle(color: Colors.white38)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.amberAccent,
+                foregroundColor: Colors.black),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Salvar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && controller.text.trim().isNotEmpty) {
+      await SavedModesNotifier().saveMode(SavedMode(
+        name: controller.text.trim(),
+        params: _params,
+        roadWidth: _roadWidth,
+        speed: _speed,
+        repetitions: _repetitions,
+      ));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Modo "${controller.text.trim()}" salvo!'),
+          backgroundColor: Colors.amberAccent,
+          behavior: SnackBarBehavior.floating,
+        ));
+      }
+    }
+    controller.dispose();
   }
 
   Widget _buildGameSliders() {

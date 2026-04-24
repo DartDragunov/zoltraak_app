@@ -35,11 +35,37 @@ class _HomeState extends State<Home> {
               'Your ultimate fitness experience.',
               style: TextStyle(fontSize: 18),
             ),
-            ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).pushNamed('/waveformSettings');
-                },
-                child: const Text('Go to Settings'))
+            const SizedBox(height: 32),
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
+                textStyle:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                backgroundColor: Colors.greenAccent,
+                foregroundColor: Colors.black,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+              icon: const Icon(Icons.sports_esports),
+              label: const Text('JOGAR'),
+              onPressed: () {
+                Navigator.of(context).pushNamed('/play');
+              },
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                side: const BorderSide(color: Colors.white24),
+              ),
+              icon: const Icon(Icons.tune),
+              label: const Text('Configurar pista'),
+              onPressed: () {
+                Navigator.of(context).pushNamed('/waveformSettings');
+              },
+            ),
           ],
         ),
       ),
