@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:zoltraak_app/model/SerialModel.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:zoltraak_app/screen/LoadingSceen.dart';
 import 'package:zoltraak_app/screen/HomeScreen.dart';
@@ -16,6 +17,9 @@ void main() async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
+  // Register the serial singleton (port opens in MyApp.initState).
+  // Update port name and baud rate to match the target device before deploying.
+  SerialModel.initialize('/dev/ttyS8', 921600);
   runApp(const MyApp());
 }
 
@@ -33,6 +37,7 @@ class _MyAppState extends State<MyApp> {
     SettingsNotifier().addListener(() {
       setState(() {});
     });
+    SerialModel.instance.connect();
   }
 
   @override

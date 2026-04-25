@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -33,7 +34,36 @@ class UserPackage {
 // Mirrors communication_controller in communication.c
 // Handles the same framing, AES-256-CTR encryption and checksum logic.
 class SerialModel extends ChangeNotifier {
-  // ── AES-256-CTR key (same bytes as in communication.c) ──────────────────────
+  // ── Singleton ─────────────────────────────────────────────────────────────
+
+  static SerialModel? _instance;
+
+  /// Initialises the singleton and opens the serial port immediately.
+  /// Throws a [SerialPortError] if the port cannot be opened.
+  /// Must be called exactly once before accessing [instance].
+  factory SerialModel.initialize(String portName, int baudRate) {
+    assert(_instance == null, 'SerialModel.initialize() called more than once');
+    _instance = SerialModel._(portName, baudRate);
+    return _instance!;
+  }
+
+  /// Returns the singleton. Throws [StateError] if [initialize] was not called.
+  static SerialModel get instance {
+    if (_instance == null) {
+      throw StateError(
+          'SerialModel not initialised. Call SerialModel.initialize(portName, baudRate) first.');
+    }
+    return _instance!;
+  }
+
+  // ── Private constructor – stores params only, port opens on connect() ──────
+
+  SerialModel._(this._portName, this._baudRate);
+
+  final String _portName;
+  final int _baudRate;
+
+  // ── AES-256-CTR key (same bytes as in communication.c) ────────────────────
   static final _key = enc.Key(Uint8List.fromList([
     0x9c,
     0xcb,
@@ -81,45 +111,69 @@ class SerialModel extends ChangeNotifier {
   final _buffer = <int>[];
   final _random = Random.secure();
 
-  // Last package received from the device — listeners filter by command.
+  // Last package received from the device.
   UserPackage? _lastReceivedPackage;
   UserPackage? get lastReceivedPackage => _lastReceivedPackage;
 
   // Used to signal the send task that a confirmation ('C') was received.
   Completer<void>? _confirmCompleter;
 
-  // ── Public state ─────────────────────────────────────────────────────────────
+  // ── Public state ──────────────────────────────────────────────────────────
 
   bool get isConnected => _port?.isOpen ?? false;
 
   static List<String> get availablePorts => SerialPort.availablePorts;
 
-  // ── Lifecycle ────────────────────────────────────────────────────────────────
+  // ── Connect ───────────────────────────────────────────────────────────────
 
-  Future<bool> connect(String portName, int baudRate) async {
-    if (isConnected) disconnect();
+  Future<void> _setupPermissions() async {
+    await Process.run('su', ['-c', 'chmod 666 $_portName']);
+    await Process.run('su', ['-c', 'chown root $_portName']);
+  }
 
-    _port = SerialPort(portName);
-    final config = SerialPortConfig()
-      ..baudRate = baudRate
-      ..bits = 8
-      ..stopBits = 1
-      ..parity = SerialPortParity.none;
-    _port!.config = config;
-    config.dispose();
+  Future<bool> connect() async {
+    if (isConnected) return true;
+    try {
+      await _setupPermissions();
 
-    if (!_port!.openReadWrite()) {
-      _port!.dispose();
-      _port = null;
+      _port = SerialPort(_portName);
+
+      if (!_port!.openReadWrite()) {
+        debugPrint('Serial open error: ${SerialPort.lastError}');
+        _port!.dispose();
+        _port = null;
+        return false;
+      }
+
+      // Config must be applied AFTER the port is opened.
+      final config = SerialPortConfig()
+        ..baudRate = _baudRate
+        ..bits = 8
+        ..parity = SerialPortParity.none
+        ..stopBits = 1;
+      config.setFlowControl(SerialPortFlowControl.none);
+      _port!.config = config;
+      config.dispose();
+
+      _reader = SerialPortReader(_port!);
+      _subscription = _reader!.stream.listen(
+        _onDataReceived,
+        onError: (error) {
+          debugPrint('Serial read error: $error');
+          disconnect();
+        },
+        onDone: disconnect,
+      );
+
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('Serial connect error: $e');
       return false;
     }
-
-    _reader = SerialPortReader(_port!);
-    _subscription = _reader!.stream.listen(_onDataReceived);
-
-    notifyListeners();
-    return true;
   }
+
+  // ── Disconnect ────────────────────────────────────────────────────────────
 
   void disconnect() {
     _subscription?.cancel();
@@ -135,7 +189,7 @@ class SerialModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  // ── Send (mirrors communication_send_task) ────────────────────────────────────
+  // ── Send (mirrors communication_send_task) ────────────────────────────────
   //
   // Packet layout (N = encrypted data length):
   //   [0..1]           HEADER  {0x5A, 0xA5}
@@ -196,7 +250,7 @@ class SerialModel extends ChangeNotifier {
 
     // Assemble final packet
     final packetLength = 3 + encryptedBytes.length + 12 + 2 + 4;
-    final packet = Uint8List(packetLength); // zeroed by default
+    final packet = Uint8List(packetLength);
 
     packet[0] = 0x5A;
     packet[1] = 0xA5;
@@ -221,9 +275,10 @@ class SerialModel extends ChangeNotifier {
     return packet;
   }
 
-  // ── Receive (mirrors communication_task + communication_compute_task) ─────────
+  // ── Receive (mirrors communication_task + communication_compute_task) ──────
 
   void _onDataReceived(Uint8List data) {
+    debugPrint('Serial data received: $data');
     _buffer.addAll(data);
     _processBuffer();
   }
@@ -243,7 +298,6 @@ class SerialModel extends ChangeNotifier {
         return;
       }
 
-      // Discard bytes before HEADER
       if (start > 0) _buffer.removeRange(0, start);
 
       // Locate TAIL
@@ -269,7 +323,7 @@ class SerialModel extends ChangeNotifier {
 
   void _processPacket(Uint8List packet) {
     final length = packet.length;
-    if (length < 10) return; // Minimum: header(2)+mode(1)+checksum(2)+tail(4)+1
+    if (length < 10) return;
 
     // Validate checksum
     int calculated = 0;
@@ -285,7 +339,6 @@ class SerialModel extends ChangeNotifier {
     final mode = String.fromCharCode(packet[2]);
 
     if (mode == 'C') {
-      // Confirmation packet – signal pending sendPackage()
       if (packet[3] == 0x00) {
         _confirmCompleter?.complete();
         _confirmCompleter = null;
@@ -296,9 +349,8 @@ class SerialModel extends ChangeNotifier {
     // Acknowledge receipt before decrypting
     _sendValidation(0x00);
 
-    // Extract encrypted payload and nonce
-    final dataLength =
-        length - 3 - 12 - 6; // N = total - header/mode - nonce - checksum/tail
+    // N = total - header/mode(3) - nonce(12) - checksum(2) - tail(4)
+    final dataLength = length - 3 - 12 - 6;
     if (dataLength <= 0) return;
 
     final encryptedData = Uint8List.fromList(packet.sublist(3, 3 + dataLength));
@@ -331,17 +383,15 @@ class SerialModel extends ChangeNotifier {
       orElse: () => PackageMode.notify,
     );
 
-    final userPackage = UserPackage(
+    _lastReceivedPackage = UserPackage(
       mode: packageMode,
       command: cmdBytes,
       data: dataBytes,
     );
-
-    _lastReceivedPackage = userPackage;
     notifyListeners();
   }
 
-  // ── Confirmation packet (mirrors send_validation_package) ────────────────────
+  // ── Confirmation packet (mirrors send_validation_package) ─────────────────
 
   void _sendValidation(int errorCode) {
     final port = _port;
@@ -353,7 +403,6 @@ class SerialModel extends ChangeNotifier {
     packet[1] = 0xA5;
     packet[2] = 0x43; // 'C'
     packet[3] = errorCode;
-    // Checksum over bytes[2..3] ('C' + errorCode)
     final checksum = (packet[2] + packet[3]) & 0xFFFF;
     packet[4] = (checksum >> 8) & 0xFF;
     packet[5] = checksum & 0xFF;

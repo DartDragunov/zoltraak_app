@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
@@ -30,7 +31,7 @@ class _PlayScreenState extends State<PlayScreen>
   SavedMode? _selectedMode;
 
   // ── Weight ────────────────────────────────────────────────────────────────
-  static const _weightOptions = [20, 30, 40, 50, 60, 70, 80, 90, 100];
+
   int _selectedWeight = 60;
 
   // ── Phase / game state ────────────────────────────────────────────────────
@@ -50,8 +51,8 @@ class _PlayScreenState extends State<PlayScreen>
   late Ticker _ticker;
   Duration _lastTickTime = Duration.zero;
 
-  // ── UART (placeholder – swap for a shared SerialModel instance) ───────────
-  final SerialModel _serial = SerialModel();
+  // ── UART ─────────────────────────────────────────────────────────────────
+  final SerialModel _serial = SerialModel.instance;
 
   // ── Computed ──────────────────────────────────────────────────────────────
   double get _repWidth {
@@ -96,20 +97,22 @@ class _PlayScreenState extends State<PlayScreen>
     final command = String.fromCharCodes(pkg.command);
 
     // TODO: define real command names with the firmware team
-    if (command == 'pos' && pkg.data.isNotEmpty) {
+    if (command == 'ENCODER' && pkg.data.isNotEmpty) {
       // data[0] = 0–255 mapped to vertical position 0.0–1.0
-      final pos = pkg.data[0] / 255.0;
+      final pos = (pkg.data[0] << pkg.data[1]) / 4096.0;
       setState(() => _playerHeightPos = pos.clamp(0.0, 1.0));
     }
   }
 
-  void _sendWeightCommand() {
-    // TODO: send selected weight to device
-    // await _serial.sendPackage(UserPackage(
-    //   mode: PackageMode.write,
-    //   command: Uint8List.fromList('weight'.codeUnits),
-    //   data: Uint8List.fromList([_selectedWeight]),
-    // ));
+  void _sendWeightCommand([int? weight]) {
+    final value = weight ?? _selectedWeight;
+    _serial
+        .sendPackage(UserPackage(
+          mode: PackageMode.write,
+          command: Uint8List.fromList('CLUTCH'.codeUnits),
+          data: Uint8List.fromList('$value'.codeUnits),
+        ))
+        .catchError((e) => debugPrint('sendClutch error: $e'));
   }
 
   void _sendStartCommand() {
@@ -161,6 +164,7 @@ class _PlayScreenState extends State<PlayScreen>
   void _onStopPressed() {
     _ticker.stop();
     _sendStopCommand();
+    _sendWeightCommand(0);
     setState(() => _phase = _PlayPhase.finished);
   }
 
@@ -210,6 +214,7 @@ class _PlayScreenState extends State<PlayScreen>
   void _endGame() {
     _ticker.stop();
     _sendStopCommand();
+    _sendWeightCommand(0);
     _phase = _PlayPhase.finished;
   }
 
@@ -344,8 +349,8 @@ class _PlayScreenState extends State<PlayScreen>
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.greenAccent,
                 foregroundColor: Colors.black,
-                textStyle: const TextStyle(
-                    fontSize: 18, fontWeight: FontWeight.bold),
+                textStyle:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12)),
               ),
@@ -412,29 +417,31 @@ class _PlayScreenState extends State<PlayScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('PESO',
-              style: TextStyle(
-                  color: Colors.white30, fontSize: 10, letterSpacing: 1.5)),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: _weightOptions.map((w) {
-              final selected = _selectedWeight == w;
-              return ChoiceChip(
-                label: Text('$w kg'),
-                selected: selected,
-                selectedColor: Colors.tealAccent,
-                labelStyle: TextStyle(
-                  color: selected ? Colors.black : Colors.white70,
-                  fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+          Row(
+            children: [
+              const Text('PESO',
+                  style: TextStyle(
+                      color: Colors.white30, fontSize: 10, letterSpacing: 1.5)),
+              const Spacer(),
+              Text(
+                '$_selectedWeight kg',
+                style: const TextStyle(
+                  color: Colors.tealAccent,
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
                 ),
-                backgroundColor: const Color(0xFF1A1A1A),
-                side: BorderSide(
-                    color: selected ? Colors.tealAccent : Colors.white12),
-                onSelected: (_) => setState(() => _selectedWeight = w),
-              );
-            }).toList(),
+              ),
+            ],
+          ),
+          Slider(
+            min: 1,
+            max: 100,
+            divisions: 99,
+            value: _selectedWeight.toDouble(),
+            activeColor: Colors.tealAccent,
+            inactiveColor: Colors.white12,
+            label: '$_selectedWeight kg',
+            onChanged: (v) => setState(() => _selectedWeight = v.round()),
           ),
         ],
       ),
@@ -564,11 +571,14 @@ class _PlayScreenState extends State<PlayScreen>
             ],
           ),
         ),
-        // Weight badge
+        // Weight badge (tappable mid-game to adjust and resend)
         Positioned(
           top: 10,
           right: 12,
-          child: _WeightBadge(weight: _selectedWeight),
+          child: GestureDetector(
+            onTap: _showWeightSheet,
+            child: _WeightBadge(weight: _selectedWeight),
+          ),
         ),
         // Stop button — only while running
         if (_phase == _PlayPhase.running)
@@ -595,6 +605,78 @@ class _PlayScreenState extends State<PlayScreen>
             ),
           ),
       ],
+    );
+  }
+
+  // ── Mid-game weight sheet ──────────────────────────────────────────────────
+
+  void _showWeightSheet() {
+    int tempWeight = _selectedWeight;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A1A),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => Padding(
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 36),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  const Text('AJUSTAR PESO',
+                      style: TextStyle(
+                          color: Colors.white54,
+                          fontSize: 12,
+                          letterSpacing: 1.5)),
+                  const Spacer(),
+                  Text(
+                    '$tempWeight kg',
+                    style: const TextStyle(
+                        color: Colors.tealAccent,
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+              Slider(
+                min: 1,
+                max: 100,
+                divisions: 99,
+                value: tempWeight.toDouble(),
+                activeColor: Colors.tealAccent,
+                inactiveColor: Colors.white12,
+                label: '$tempWeight kg',
+                onChanged: (v) => setSheet(() => tempWeight = v.round()),
+              ),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.tealAccent,
+                    foregroundColor: Colors.black,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    textStyle: const TextStyle(
+                        fontSize: 15, fontWeight: FontWeight.bold),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10)),
+                  ),
+                  icon: const Icon(Icons.send),
+                  label: const Text('ENVIAR'),
+                  onPressed: () {
+                    setState(() => _selectedWeight = tempWeight);
+                    _sendWeightCommand();
+                    Navigator.pop(ctx);
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
