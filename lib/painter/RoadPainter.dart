@@ -22,11 +22,41 @@ class RoadPainter extends CustomPainter {
     required this.offsetX,
     this.roadWidth = 80,
     this.shoulderWidth = 12,
-    this.samplesPerSegment = 80,
+    this.samplesPerSegment = 40,
     this.showCenterLine = true,
     this.showDebugNormals = false,
     this.repetitions = 1,
   });
+
+  // ── Static sample cache ─────────────────────────────────────────────────────
+  // Keyed by "sw,sh,p0,p1,p2,p3,p4,p5,repIdx,samples".
+  // Capped at _kCacheMax entries to avoid unbounded growth during slider edits.
+  static const int _kCacheMax = 120;
+  static const int _kStaticSamples = 40;
+  static final Map<String, List<({Offset point, Offset normal})>> _sampleCache =
+      {};
+
+  static String _cacheKey(
+          double sw, double sh, RoadParams p, int repIdx, int samples) =>
+      '${sw.toStringAsFixed(0)},${sh.toStringAsFixed(0)},'
+      '${p.peakHeightFactor},${p.slopeUpWidthFactor},${p.slopeDownWidthFactor},'
+      '${p.topFlatFactor},${p.bottomFlatFactor},${p.baselineYFactor},'
+      '$repIdx,$samples';
+
+  static List<({Offset point, Offset normal})> _getCachedSamples(
+      double sw, double sh, RoadParams p, int repIdx, int samples) {
+    final key = _cacheKey(sw, sh, p, repIdx, samples);
+    var cached = _sampleCache[key];
+    if (cached != null) return cached;
+    if (_sampleCache.length >= _kCacheMax) {
+      _sampleCache.remove(_sampleCache.keys.first);
+    }
+    final repW = computeRepWidth(sw, p);
+    final segs = buildSegmentsForRep(sw, sh, p, repIdx * repW);
+    cached = sampleSegments(segs, samples);
+    _sampleCache[key] = cached;
+    return cached;
+  }
 
   // ── Width of one repetition cycle in pixels ─────────────────────────────────
   //
@@ -129,10 +159,8 @@ class RoadPainter extends CustomPainter {
     if (repW <= 0) return screenHeight * params.baselineYFactor;
 
     final repIndex = (worldX / repW).floor().clamp(0, 9999);
-    final repStartX = repIndex * repW;
-    final segs =
-        buildSegmentsForRep(screenWidth, screenHeight, params, repStartX);
-    final samples = sampleSegments(segs, 40);
+    final samples = _getCachedSamples(
+        screenWidth, screenHeight, params, repIndex, _kStaticSamples);
 
     double minDist = double.infinity;
     double centerY = screenHeight * params.baselineYFactor;
@@ -157,10 +185,8 @@ class RoadPainter extends CustomPainter {
     if (repW <= 0) return 0;
 
     final repIndex = (worldX / repW).floor().clamp(0, 9999);
-    final repStartX = repIndex * repW;
-    final segs =
-        buildSegmentsForRep(screenWidth, screenHeight, params, repStartX);
-    final samples = sampleSegments(segs, 60);
+    final samples = _getCachedSamples(
+        screenWidth, screenHeight, params, repIndex, _kStaticSamples);
     if (samples.length < 2) return 0;
 
     double minDist = double.infinity;
@@ -436,9 +462,8 @@ class RoadPainter extends CustomPainter {
         : 0;
 
     for (int rep = firstVisible; rep <= lastVisible; rep++) {
-      final segments =
-          buildSegmentsForRep(size.width, size.height, params, rep * repW);
-      final samples = sampleSegments(segments, samplesPerSegment);
+      final samples = _getCachedSamples(
+          size.width, size.height, params, rep, samplesPerSegment);
       if (samples.isEmpty) continue;
 
       final halfRoad = roadWidth / 2;

@@ -74,6 +74,9 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
   late Ticker _ticker;
   Duration _lastTickTime = Duration.zero;
 
+  /// Drives repaint of the game canvas without rebuilding the full widget tree.
+  final _gameTick = ValueNotifier<int>(0);
+
   double get _repWidth {
     if (_canvasSize.width <= 0) return 300;
     return RoadPainter.computeRepWidth(_canvasSize.width, _params);
@@ -112,24 +115,23 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
 
     if (dt > 0.1) return; // skip large jumps
 
-    setState(() {
-      _elapsedSeconds += dt;
-      _offsetX += _speed * dt;
+    _elapsedSeconds += dt;
+    _offsetX += _speed * dt;
 
-      if (_elapsedSeconds >= _gameDuration) {
+    if (_elapsedSeconds >= _gameDuration) {
+      _endGame();
+      return;
+    }
+
+    if (_canvasSize.width > 0) {
+      if (_offsetX >= _totalLength) {
         _endGame();
         return;
       }
-
-      if (_canvasSize.width > 0) {
-        if (_offsetX >= _totalLength) {
-          _endGame();
-          return;
-        }
-        _updateScore(dt);
-        _updateCarAngle(dt);
-      }
-    });
+      _updateScore(dt);
+      _updateCarAngle(dt);
+    }
+    _gameTick.value++;
   }
 
   void _updateScore(double dt) {
@@ -221,9 +223,11 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
   }
 
   void _endGame() {
-    _gameOver = true;
-    _isRunning = false;
     if (_ticker.isActive) _ticker.stop();
+    setState(() {
+      _gameOver = true;
+      _isRunning = false;
+    });
   }
 
   void _toggleRunning() {
@@ -267,6 +271,7 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
   @override
   void dispose() {
     _ticker.dispose();
+    _gameTick.dispose();
     super.dispose();
   }
 
@@ -325,125 +330,128 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
             child: LayoutBuilder(
               builder: (context, constraints) {
                 _canvasSize = constraints.biggest;
-                return Stack(
-                  children: [
-                    CustomPaint(
-                      painter: RoadPainter(
-                        offsetX: _offsetX,
-                        params: _params,
-                        roadWidth: _roadWidth,
-                        showCenterLine: _showCenter,
-                        showDebugNormals: _showNormals,
-                        shoulderWidth: 1,
-                        repetitions: _repetitions,
+                return ValueListenableBuilder<int>(
+                  valueListenable: _gameTick,
+                  builder: (context, _, __) => Stack(
+                    children: [
+                      CustomPaint(
+                        painter: RoadPainter(
+                          offsetX: _offsetX,
+                          params: _params,
+                          roadWidth: _roadWidth,
+                          showCenterLine: _showCenter,
+                          showDebugNormals: _showNormals,
+                          shoulderWidth: 1,
+                          repetitions: _repetitions,
+                        ),
+                        child: const SizedBox.expand(),
                       ),
-                      child: const SizedBox.expand(),
-                    ),
-                    PlayerWidget(
-                      size: constraints.biggest,
-                      widthPosition: _playerWidthPos,
-                      heightPosition: _playerHeightPos,
-                      roadAngle: _carAngle,
-                      showDebug: _showNormals,
-                      driftAngle: _manualControl && _isDragging
-                          ? (_dragAngle - _carAngle)
-                          : (_roadAngle - _carAngle),
-                      onPositionChanged: _manualControl
-                          ? (wPos, hPos) {
-                              setState(() {
-                                final dx = (wPos - _prevDragWidthPos) *
-                                    _canvasSize.width;
-                                final dy = (hPos - _prevDragHeightPos) *
-                                    _canvasSize.height;
-                                if (dx * dx + dy * dy > 1) {
-                                  _dragAngle = atan2(dy, dx);
-                                  _isDragging = true;
-                                }
-                                _prevDragWidthPos = wPos;
-                                _prevDragHeightPos = hPos;
-                                _playerHeightPos = hPos;
-                              });
-                            }
-                          : null,
-                      onDragEnd: _manualControl
-                          ? () {
-                              setState(() {
-                                _isDragging = false;
-                              });
-                            }
-                          : null,
-                    ),
-                    // Score & timer overlay
-                    Positioned(
-                      top: 8,
-                      left: 12,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'PONTOS: ${_score.round()}',
-                            style: const TextStyle(
-                              color: Colors.greenAccent,
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                              shadows: [
-                                Shadow(blurRadius: 4, color: Colors.black)
-                              ],
-                            ),
-                          ),
-                          Text(
-                            'TEMPO: ${_elapsedSeconds.toStringAsFixed(1)}s / ${_gameDuration.round()}s',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 14,
-                              shadows: [
-                                Shadow(blurRadius: 4, color: Colors.black)
-                              ],
-                            ),
-                          ),
-                        ],
+                      PlayerWidget(
+                        size: constraints.biggest,
+                        widthPosition: _playerWidthPos,
+                        heightPosition: _playerHeightPos,
+                        roadAngle: _carAngle,
+                        showDebug: _showNormals,
+                        driftAngle: _manualControl && _isDragging
+                            ? (_dragAngle - _carAngle)
+                            : (_roadAngle - _carAngle),
+                        onPositionChanged: _manualControl
+                            ? (wPos, hPos) {
+                                setState(() {
+                                  final dx = (wPos - _prevDragWidthPos) *
+                                      _canvasSize.width;
+                                  final dy = (hPos - _prevDragHeightPos) *
+                                      _canvasSize.height;
+                                  if (dx * dx + dy * dy > 1) {
+                                    _dragAngle = atan2(dy, dx);
+                                    _isDragging = true;
+                                  }
+                                  _prevDragWidthPos = wPos;
+                                  _prevDragHeightPos = hPos;
+                                  _playerHeightPos = hPos;
+                                });
+                              }
+                            : null,
+                        onDragEnd: _manualControl
+                            ? () {
+                                setState(() {
+                                  _isDragging = false;
+                                });
+                              }
+                            : null,
                       ),
-                    ),
-                    // Game over overlay
-                    if (_gameOver)
-                      Center(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 32, vertical: 20),
-                          decoration: BoxDecoration(
-                            color: Colors.black87,
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(color: Colors.white24),
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Text(
-                                'FIM DE JOGO',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 28,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                      // Score & timer overlay
+                      Positioned(
+                        top: 8,
+                        left: 12,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'PONTOS: ${_score.round()}',
+                              style: const TextStyle(
+                                color: Colors.greenAccent,
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                shadows: [
+                                  Shadow(blurRadius: 4, color: Colors.black)
+                                ],
                               ),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Pontuacao: ${_score.round()}',
-                                style: const TextStyle(
-                                  color: Colors.greenAccent,
-                                  fontSize: 22,
-                                ),
+                            ),
+                            Text(
+                              'TEMPO: ${_elapsedSeconds.toStringAsFixed(1)}s / ${_gameDuration.round()}s',
+                              style: const TextStyle(
+                                color: Colors.white70,
+                                fontSize: 14,
+                                shadows: [
+                                  Shadow(blurRadius: 4, color: Colors.black)
+                                ],
                               ),
-                              const SizedBox(height: 12),
-                              ElevatedButton(
-                                onPressed: _reset,
-                                child: const Text('Jogar Novamente'),
-                              ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
                       ),
-                  ],
+                      // Game over overlay
+                      if (_gameOver)
+                        Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 32, vertical: 20),
+                            decoration: BoxDecoration(
+                              color: Colors.black87,
+                              borderRadius: BorderRadius.circular(16),
+                              border: Border.all(color: Colors.white24),
+                            ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Text(
+                                  'FIM DE JOGO',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 28,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  'Pontuacao: ${_score.round()}',
+                                  style: const TextStyle(
+                                    color: Colors.greenAccent,
+                                    fontSize: 22,
+                                  ),
+                                ),
+                                const SizedBox(height: 12),
+                                ElevatedButton(
+                                  onPressed: _reset,
+                                  child: const Text('Jogar Novamente'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
                 );
               },
             ),

@@ -58,6 +58,12 @@ class _PlayScreenState extends State<PlayScreen>
   double _loadCellValue = 0.0;
   double _encoderRawValue = 0.0;
 
+  /// Throttle debug badge UI rebuilds to ≤10 Hz.
+  DateTime _lastSensorUiUpdate = DateTime.fromMillisecondsSinceEpoch(0);
+
+  // ── Game repaint notifier (avoids full-tree setState on every tick) ────────
+  final _gameTick = ValueNotifier<int>(0);
+
   // ── Seat adjustment ───────────────────────────────────────────────────────
   Timer? _seatTimer;
 
@@ -89,12 +95,22 @@ class _PlayScreenState extends State<PlayScreen>
     _countdownTimer?.cancel();
     _seatTimer?.cancel();
     _ticker.dispose();
+    _gameTick.dispose();
     super.dispose();
   }
 
   void _onModesChanged() => setState(() {});
 
   // ── UART handlers (placeholders) ──────────────────────────────────────────
+
+  /// Throttled rebuild for debug sensor badges (max 10 Hz).
+  void _scheduleDebugRefresh() {
+    final now = DateTime.now();
+    if (now.difference(_lastSensorUiUpdate).inMilliseconds >= 100) {
+      _lastSensorUiUpdate = now;
+      if (mounted) setState(() {});
+    }
+  }
 
   /// Called whenever SerialModel receives a packet.
   void _onSerialPacket() {
@@ -104,14 +120,15 @@ class _PlayScreenState extends State<PlayScreen>
     final command = String.fromCharCodes(pkg.command);
 
     // Debug sensor readings — active in all phases
-    if (command == 'LOADCELL' && pkg.data.isNotEmpty) {
+    if (command == 'LOAD_CELL' && pkg.data.isNotEmpty) {
       final double val;
       if (pkg.data.length >= 4) {
         val = ByteData.sublistView(pkg.data).getFloat32(0, Endian.little);
       } else {
         val = pkg.data[0].toDouble();
       }
-      setState(() => _loadCellValue = val);
+      _loadCellValue = val;
+      _scheduleDebugRefresh();
       return;
     }
 
@@ -119,7 +136,8 @@ class _PlayScreenState extends State<PlayScreen>
       final raw = pkg.data.length >= 2
           ? ((pkg.data[0] << 8) | pkg.data[1]).toDouble()
           : pkg.data[0].toDouble();
-      setState(() => _encoderRawValue = raw);
+      _encoderRawValue = raw;
+      _scheduleDebugRefresh();
     }
 
     // Game-play processing — only while running
@@ -129,7 +147,8 @@ class _PlayScreenState extends State<PlayScreen>
     if (command == 'ENCODER' && pkg.data.isNotEmpty) {
       // data[0] = 0–255 mapped to vertical position 0.0–1.0
       final pos = (pkg.data[0] << pkg.data[1]) / 4096.0;
-      setState(() => _playerHeightPos = pos.clamp(0.0, 1.0));
+      _playerHeightPos = pos.clamp(0.0, 1.0);
+      _gameTick.value++;
     }
   }
 
@@ -249,26 +268,25 @@ class _PlayScreenState extends State<PlayScreen>
     _lastTickTime = elapsed;
     if (dt > 0.1) return;
 
-    setState(() {
-      _elapsedSeconds += dt;
-      _offsetX += _speed * dt;
-      if (_elapsedSeconds >= _gameDuration ||
-          (_canvasSize.width > 0 && _offsetX >= _totalLength)) {
-        _endGame();
-        return;
-      }
-      if (_canvasSize.width > 0) {
-        _updateScore(dt);
-        _updateCarAngle(dt);
-      }
-    });
+    _elapsedSeconds += dt;
+    _offsetX += _speed * dt;
+    if (_elapsedSeconds >= _gameDuration ||
+        (_canvasSize.width > 0 && _offsetX >= _totalLength)) {
+      _endGame();
+      return;
+    }
+    if (_canvasSize.width > 0) {
+      _updateScore(dt);
+      _updateCarAngle(dt);
+    }
+    _gameTick.value++;
   }
 
   void _endGame() {
     _ticker.stop();
     _sendStopCommand();
     _sendWeightCommand(0);
-    _phase = _PlayPhase.finished;
+    setState(() => _phase = _PlayPhase.finished);
   }
 
   void _updateScore(double dt) {
@@ -670,100 +688,103 @@ class _PlayScreenState extends State<PlayScreen>
   // ── Running game view ─────────────────────────────────────────────────────
 
   Widget _buildGameView() {
-    return Stack(
-      children: [
-        LayoutBuilder(builder: (ctx, constraints) {
-          _canvasSize = constraints.biggest;
-          return CustomPaint(
-            painter: RoadPainter(
-              offsetX: _offsetX,
-              params: _params,
-              roadWidth: _roadWidth,
-              showCenterLine: true,
-              showDebugNormals: false,
-              shoulderWidth: 1,
-              repetitions: _repetitions,
-            ),
-            child: const SizedBox.expand(),
-          );
-        }),
-        PlayerWidget(
-          size: _canvasSize,
-          widthPosition: _playerWidthPos,
-          heightPosition: _playerHeightPos,
-          roadAngle: _carAngle,
-          showDebug: false,
-          driftAngle: _roadAngle - _carAngle,
-          onPositionChanged: null,
-          onDragEnd: null,
-        ),
-        // Score overlay
-        Positioned(
-          top: 10,
-          left: 12,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'PONTOS: ${_score.round()}',
-                style: const TextStyle(
-                  color: Colors.greenAccent,
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                  shadows: [Shadow(blurRadius: 4, color: Colors.black)],
-                ),
+    return ValueListenableBuilder<int>(
+      valueListenable: _gameTick,
+      builder: (context, _, __) => Stack(
+        children: [
+          LayoutBuilder(builder: (ctx, constraints) {
+            _canvasSize = constraints.biggest;
+            return CustomPaint(
+              painter: RoadPainter(
+                offsetX: _offsetX,
+                params: _params,
+                roadWidth: _roadWidth,
+                showCenterLine: true,
+                showDebugNormals: false,
+                shoulderWidth: 1,
+                repetitions: _repetitions,
               ),
-              Text(
-                'TEMPO: ${_elapsedSeconds.toStringAsFixed(1)}s / ${_gameDuration.round()}s',
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 14,
-                  shadows: [Shadow(blurRadius: 4, color: Colors.black)],
-                ),
-              ),
-            ],
+              child: const SizedBox.expand(),
+            );
+          }),
+          PlayerWidget(
+            size: _canvasSize,
+            widthPosition: _playerWidthPos,
+            heightPosition: _playerHeightPos,
+            roadAngle: _carAngle,
+            showDebug: false,
+            driftAngle: _roadAngle - _carAngle,
+            onPositionChanged: null,
+            onDragEnd: null,
           ),
-        ),
-        // Weight badge (tappable mid-game to adjust and resend)
-        Positioned(
-          top: 10,
-          right: 12,
-          child: GestureDetector(
-            onTap: _showWeightSheet,
-            child: _WeightBadge(weight: _selectedWeight),
-          ),
-        ),
-        // Debug sensor overlay
-        Positioned(
-          top: 52,
-          right: 12,
-          child: _buildDebugBadges(),
-        ),
-        // Stop button — only while running
-        if (_phase == _PlayPhase.running)
+          // Score overlay
           Positioned(
-            bottom: 24,
-            left: 0,
-            right: 0,
-            child: Center(
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
-                  foregroundColor: Colors.white,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 40, vertical: 14),
-                  textStyle: const TextStyle(
-                      fontSize: 16, fontWeight: FontWeight.bold),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(30)),
+            top: 10,
+            left: 12,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'PONTOS: ${_score.round()}',
+                  style: const TextStyle(
+                    color: Colors.greenAccent,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    shadows: [Shadow(blurRadius: 4, color: Colors.black)],
+                  ),
                 ),
-                icon: const Icon(Icons.stop),
-                label: const Text('PARAR'),
-                onPressed: _onStopPressed,
-              ),
+                Text(
+                  'TEMPO: ${_elapsedSeconds.toStringAsFixed(1)}s / ${_gameDuration.round()}s',
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 14,
+                    shadows: [Shadow(blurRadius: 4, color: Colors.black)],
+                  ),
+                ),
+              ],
             ),
           ),
-      ],
+          // Weight badge (tappable mid-game to adjust and resend)
+          Positioned(
+            top: 10,
+            right: 12,
+            child: GestureDetector(
+              onTap: _showWeightSheet,
+              child: _WeightBadge(weight: _selectedWeight),
+            ),
+          ),
+          // Debug sensor overlay
+          Positioned(
+            top: 52,
+            right: 12,
+            child: _buildDebugBadges(),
+          ),
+          // Stop button — only while running
+          if (_phase == _PlayPhase.running)
+            Positioned(
+              bottom: 24,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 40, vertical: 14),
+                    textStyle: const TextStyle(
+                        fontSize: 16, fontWeight: FontWeight.bold),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(30)),
+                  ),
+                  icon: const Icon(Icons.stop),
+                  label: const Text('PARAR'),
+                  onPressed: _onStopPressed,
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
