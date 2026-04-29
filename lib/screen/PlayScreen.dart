@@ -54,6 +54,13 @@ class _PlayScreenState extends State<PlayScreen>
   // ── UART ─────────────────────────────────────────────────────────────────
   final SerialModel _serial = SerialModel.instance;
 
+  // ── Debug sensor values (live from UART) ──────────────────────────────────
+  double _loadCellValue = 0.0;
+  double _encoderRawValue = 0.0;
+
+  // ── Seat adjustment ───────────────────────────────────────────────────────
+  Timer? _seatTimer;
+
   // ── Computed ──────────────────────────────────────────────────────────────
   double get _repWidth {
     if (_canvasSize.width <= 0) return 300;
@@ -80,6 +87,7 @@ class _PlayScreenState extends State<PlayScreen>
     _serial.removeListener(_onSerialPacket);
     SavedModesNotifier().removeListener(_onModesChanged);
     _countdownTimer?.cancel();
+    _seatTimer?.cancel();
     _ticker.dispose();
     super.dispose();
   }
@@ -89,12 +97,33 @@ class _PlayScreenState extends State<PlayScreen>
   // ── UART handlers (placeholders) ──────────────────────────────────────────
 
   /// Called whenever SerialModel receives a packet.
-  /// Replace with actual protocol parsing once UART is wired.
   void _onSerialPacket() {
     final pkg = _serial.lastReceivedPackage;
-    if (pkg == null || _phase != _PlayPhase.running) return;
+    if (pkg == null) return;
 
     final command = String.fromCharCodes(pkg.command);
+
+    // Debug sensor readings — active in all phases
+    if (command == 'LOADCELL' && pkg.data.isNotEmpty) {
+      final double val;
+      if (pkg.data.length >= 4) {
+        val = ByteData.sublistView(pkg.data).getFloat32(0, Endian.little);
+      } else {
+        val = pkg.data[0].toDouble();
+      }
+      setState(() => _loadCellValue = val);
+      return;
+    }
+
+    if (command == 'ENCODER' && pkg.data.isNotEmpty) {
+      final raw = pkg.data.length >= 2
+          ? ((pkg.data[0] << 8) | pkg.data[1]).toDouble()
+          : pkg.data[0].toDouble();
+      setState(() => _encoderRawValue = raw);
+    }
+
+    // Game-play processing — only while running
+    if (_phase != _PlayPhase.running) return;
 
     // TODO: define real command names with the firmware team
     if (command == 'ENCODER' && pkg.data.isNotEmpty) {
@@ -131,6 +160,30 @@ class _PlayScreenState extends State<PlayScreen>
     //   command: Uint8List.fromList('stop'.codeUnits),
     //   data: Uint8List(0),
     // ));
+  }
+
+  // ── Seat adjustment ───────────────────────────────────────────────────────
+
+  void _sendSeatCommand(String cmd) {
+    _serial
+        .sendPackage(UserPackage(
+          mode: PackageMode.write,
+          command: Uint8List.fromList(cmd.codeUnits),
+          data: Uint8List(0),
+        ))
+        .catchError((e) => debugPrint('sendSeat error: $e'));
+  }
+
+  void _startSeatCommand(String cmd) {
+    _sendSeatCommand(cmd); // immediate first send
+    _seatTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      _sendSeatCommand(cmd);
+    });
+  }
+
+  void _stopSeatCommand() {
+    _seatTimer?.cancel();
+    _seatTimer = null;
   }
 
   // ── Start / stop flow ─────────────────────────────────────────────────────
@@ -334,8 +387,10 @@ class _PlayScreenState extends State<PlayScreen>
           child: SingleChildScrollView(
             child: Column(
               children: [
+                _buildDebugBadges(),
                 _buildModeSelector(),
                 _buildWeightSelector(),
+                _buildSeatAdjustControl(),
               ],
             ),
           ),
@@ -444,6 +499,104 @@ class _PlayScreenState extends State<PlayScreen>
             onChanged: (v) => setState(() => _selectedWeight = v.round()),
           ),
         ],
+      ),
+    );
+  }
+
+  // ── Debug sensor badges ───────────────────────────────────────────────────
+
+  Widget _buildDebugBadges() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
+      child: Row(
+        children: [
+          _DebugChip(
+            label: 'CÉLULA DE CARGA',
+            value: _loadCellValue.toStringAsFixed(2),
+            color: Colors.orangeAccent,
+          ),
+          const SizedBox(width: 8),
+          _DebugChip(
+            label: 'ENCODER',
+            value: _encoderRawValue.toStringAsFixed(0),
+            color: Colors.purpleAccent,
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Seat adjustment control ───────────────────────────────────────────────
+
+  Widget _buildSeatAdjustControl() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'AJUSTE DE ACENTO',
+            style: TextStyle(
+                color: Colors.white30, fontSize: 10, letterSpacing: 1.5),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _buildSeatButton(
+                icon: Icons.keyboard_arrow_up,
+                label: 'CIMA',
+                cmd: 'SEAT_UP',
+                color: Colors.tealAccent,
+              ),
+              const SizedBox(width: 32),
+              _buildSeatButton(
+                icon: Icons.keyboard_arrow_down,
+                label: 'BAIXO',
+                cmd: 'SEAT_DN',
+                color: Colors.tealAccent,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSeatButton({
+    required IconData icon,
+    required String label,
+    required String cmd,
+    required Color color,
+  }) {
+    return GestureDetector(
+      onTapDown: (_) => _startSeatCommand(cmd),
+      onTapUp: (_) => _stopSeatCommand(),
+      onTapCancel: _stopSeatCommand,
+      child: Container(
+        width: 80,
+        height: 80,
+        decoration: BoxDecoration(
+          color: color.withAlpha(25),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withAlpha(120), width: 1.5),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, color: color, size: 38),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -579,6 +732,12 @@ class _PlayScreenState extends State<PlayScreen>
             onTap: _showWeightSheet,
             child: _WeightBadge(weight: _selectedWeight),
           ),
+        ),
+        // Debug sensor overlay
+        Positioned(
+          top: 52,
+          right: 12,
+          child: _buildDebugBadges(),
         ),
         // Stop button — only while running
         if (_phase == _PlayPhase.running)
@@ -753,6 +912,57 @@ class _WeightBadge extends StatelessWidget {
           fontWeight: FontWeight.bold,
           shadows: [Shadow(blurRadius: 4, color: Colors.black)],
         ),
+      ),
+    );
+  }
+}
+
+// ── Debug chip widget ─────────────────────────────────────────────────────────
+
+class _DebugChip extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+
+  const _DebugChip({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withAlpha(100)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: color.withAlpha(180),
+              fontSize: 9,
+              letterSpacing: 1.2,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              shadows: const [Shadow(blurRadius: 4, color: Colors.black)],
+            ),
+          ),
+        ],
       ),
     );
   }

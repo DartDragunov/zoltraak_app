@@ -127,8 +127,8 @@ class SerialModel extends ChangeNotifier {
   // ── Connect ───────────────────────────────────────────────────────────────
 
   Future<void> _setupPermissions() async {
-    await Process.run('su', ['-c', 'chmod 666 $_portName']);
-    await Process.run('su', ['-c', 'chown root $_portName']);
+    // await Process.run('su', ['-c', 'chmod 666 $_portName']);
+    // await Process.run('su', ['-c', 'chown root $_portName']);
   }
 
   Future<bool> connect() async {
