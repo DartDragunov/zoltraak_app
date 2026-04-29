@@ -1,4 +1,6 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:zoltraak_app/model/SerialModel.dart';
 import 'package:flutter/scheduler.dart';
 import 'dart:math';
 import 'package:zoltraak_app/model/RoadParams.dart';
@@ -77,6 +79,17 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
   /// Drives repaint of the game canvas without rebuilding the full widget tree.
   final _gameTick = ValueNotifier<int>(0);
 
+  final SerialModel _serial = SerialModel.instance;
+
+  // ── Sensor readings ──────────────────────────────────────────────────────
+  double _loadCellValue = 0.0;
+  double _encoderRawValue = 0.0;
+  DateTime _lastSensorUiUpdate = DateTime.fromMillisecondsSinceEpoch(0);
+
+  // ── Weight control ─────────────────────────────────────────────────────
+  int _selectedWeight = 60;
+  bool _weightEnabled = false;
+
   double get _repWidth {
     if (_canvasSize.width <= 0) return 300;
     return RoadPainter.computeRepWidth(_canvasSize.width, _params);
@@ -100,6 +113,7 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
   void initState() {
     super.initState();
     _ticker = createTicker(_onTick);
+    _serial.addListener(_onSerialPacket);
   }
 
   void _onTick(Duration elapsed) {
@@ -270,9 +284,57 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
 
   @override
   void dispose() {
+    _serial.removeListener(_onSerialPacket);
     _ticker.dispose();
     _gameTick.dispose();
     super.dispose();
+  }
+
+  void _scheduleDebugRefresh() {
+    final now = DateTime.now();
+    if (now.difference(_lastSensorUiUpdate).inMilliseconds >= 100) {
+      _lastSensorUiUpdate = now;
+      if (mounted) setState(() {});
+    }
+  }
+
+  void _sendWeightCommand([int? weight]) {
+    final value = weight ?? (_weightEnabled ? _selectedWeight : 0);
+    _serial
+        .sendPackage(UserPackage(
+          mode: PackageMode.write,
+          command: Uint8List.fromList('CLUTCH'.codeUnits),
+          data: Uint8List.fromList('$value'.codeUnits),
+        ))
+        .catchError((e) => debugPrint('sendClutch error: $e'));
+  }
+
+  void _onSerialPacket() {
+    final pkg = _serial.lastReceivedPackage;
+    if (pkg == null) return;
+    final command = String.fromCharCodes(pkg.command);
+
+    if (command == 'LOAD_CELL' && pkg.data.isNotEmpty) {
+      final double val;
+      if (pkg.data.length >= 4) {
+        val = ByteData.sublistView(pkg.data).getFloat32(0, Endian.little);
+      } else {
+        val = pkg.data[0].toDouble();
+      }
+      _loadCellValue = val;
+      _scheduleDebugRefresh();
+      return;
+    }
+
+    if (command == 'ENCODER' && pkg.data.isNotEmpty) {
+      final raw = pkg.data.length >= 2
+          ? ((pkg.data[0] << 8) | pkg.data[1]).toDouble()
+          : pkg.data[0].toDouble();
+      _encoderRawValue = raw;
+      final pos = (pkg.data[0] << pkg.data[1]) / 4096.0;
+      _playerHeightPos = pos.clamp(0.0, 1.0);
+      _gameTick.value++;
+    }
   }
 
   @override
@@ -284,6 +346,58 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
         backgroundColor: Colors.black,
         foregroundColor: Colors.white,
         actions: [
+          // ── Sensor badges ───────────────────────────────────────────────
+          _AppBarChip(
+            label: 'CARGA',
+            value: _loadCellValue.toStringAsFixed(1),
+            color: Colors.orangeAccent,
+          ),
+          const SizedBox(width: 4),
+          _AppBarChip(
+            label: 'ENC',
+            value: _encoderRawValue.toStringAsFixed(0),
+            color: Colors.purpleAccent,
+          ),
+          const SizedBox(width: 4),
+          // ── Weight toggle ───────────────────────────────────────────────
+          IconButton(
+            icon: const Icon(Icons.fitness_center),
+            color: _weightEnabled ? Colors.tealAccent : Colors.white38,
+            tooltip: _weightEnabled ? 'Peso ativo' : 'Peso inativo',
+            onPressed: () {
+              setState(() => _weightEnabled = !_weightEnabled);
+              _sendWeightCommand();
+            },
+          ),
+          // ── Weight selector ─────────────────────────────────────────────
+          GestureDetector(
+            onTap: _showWeightDialog,
+            child: Container(
+              margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: _weightEnabled
+                    ? Colors.tealAccent.withAlpha(40)
+                    : Colors.white.withAlpha(10),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                  color: _weightEnabled
+                      ? Colors.tealAccent.withAlpha(180)
+                      : Colors.white24,
+                ),
+              ),
+              child: Text(
+                '$_selectedWeight kg',
+                style: TextStyle(
+                  color:
+                      _weightEnabled ? Colors.tealAccent : Colors.white38,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.bookmark_add),
             color: Colors.amberAccent,
@@ -486,6 +600,61 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
     );
   }
 
+  Future<void> _showWeightDialog() async {
+    int tempWeight = _selectedWeight;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          backgroundColor: const Color(0xFF1A1A1A),
+          title: const Text('Peso',
+              style: TextStyle(color: Colors.white)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '$tempWeight kg',
+                style: const TextStyle(
+                  color: Colors.tealAccent,
+                  fontSize: 22,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              Slider(
+                min: 1,
+                max: 100,
+                divisions: 99,
+                value: tempWeight.toDouble(),
+                activeColor: Colors.tealAccent,
+                inactiveColor: Colors.white12,
+                label: '$tempWeight kg',
+                onChanged: (v) => setLocal(() => tempWeight = v.round()),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('Cancelar',
+                  style: TextStyle(color: Colors.white38)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.tealAccent,
+                  foregroundColor: Colors.black),
+              onPressed: () {
+                setState(() => _selectedWeight = tempWeight);
+                if (_weightEnabled) _sendWeightCommand();
+                Navigator.of(ctx).pop();
+              },
+              child: const Text('Aplicar'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _showSaveDialog() async {
     final controller = TextEditingController();
     final confirmed = await showDialog<bool>(
@@ -594,6 +763,55 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
               _repetitions = v.round();
               _syncDurationFromReps();
             }),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── AppBar sensor chip ────────────────────────────────────────────────────
+
+class _AppBarChip extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+
+  const _AppBarChip({
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withAlpha(100)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              color: color.withAlpha(180),
+              fontSize: 8,
+              letterSpacing: 1.0,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              color: color,
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+            ),
           ),
         ],
       ),
