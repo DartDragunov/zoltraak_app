@@ -389,8 +389,7 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
               child: Text(
                 '$_selectedWeight kg',
                 style: TextStyle(
-                  color:
-                      _weightEnabled ? Colors.tealAccent : Colors.white38,
+                  color: _weightEnabled ? Colors.tealAccent : Colors.white38,
                   fontSize: 13,
                   fontWeight: FontWeight.bold,
                 ),
@@ -607,8 +606,7 @@ class _WaveformSettingsWidgetState extends State<WaveformSettingsWidget>
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
           backgroundColor: const Color(0xFF1A1A1A),
-          title: const Text('Peso',
-              style: TextStyle(color: Colors.white)),
+          title: const Text('Peso', style: TextStyle(color: Colors.white)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [

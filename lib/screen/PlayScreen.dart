@@ -106,7 +106,7 @@ class _PlayScreenState extends State<PlayScreen>
   /// Throttled rebuild for debug sensor badges (max 10 Hz).
   void _scheduleDebugRefresh() {
     final now = DateTime.now();
-    if (now.difference(_lastSensorUiUpdate).inMilliseconds >= 100) {
+    if (now.difference(_lastSensorUiUpdate).inMilliseconds >= 60) {
       _lastSensorUiUpdate = now;
       if (mounted) setState(() {});
     }
@@ -137,6 +137,8 @@ class _PlayScreenState extends State<PlayScreen>
           ? ((pkg.data[0] << 8) | pkg.data[1]).toDouble()
           : pkg.data[0].toDouble();
       _encoderRawValue = raw;
+      final pos = raw / 4096.0;
+      _playerHeightPos = pos.clamp(0.0, 1.0);
       _scheduleDebugRefresh();
     }
 
@@ -144,12 +146,12 @@ class _PlayScreenState extends State<PlayScreen>
     if (_phase != _PlayPhase.running) return;
 
     // TODO: define real command names with the firmware team
-    if (command == 'ENCODER' && pkg.data.isNotEmpty) {
-      // data[0] = 0–255 mapped to vertical position 0.0–1.0
-      final pos = (pkg.data[0] << pkg.data[1]) / 4096.0;
-      _playerHeightPos = pos.clamp(0.0, 1.0);
-      _gameTick.value++;
-    }
+    // if (command == 'ENCODER' && pkg.data.isNotEmpty) {
+    //   // data[0] = 0–255 mapped to vertical position 0.0–1.0
+    //   final pos = (pkg.data[0] << pkg.data[1]) / 4096.0;
+    //   _playerHeightPos = pos.clamp(0.0, 1.0);
+    //   _gameTick.value++;
+    // }
   }
 
   void _sendWeightCommand([int? weight]) {
@@ -203,6 +205,7 @@ class _PlayScreenState extends State<PlayScreen>
   void _stopSeatCommand() {
     _seatTimer?.cancel();
     _seatTimer = null;
+    _sendSeatCommand('SEAT_STOP');
   }
 
   // ── Start / stop flow ─────────────────────────────────────────────────────
@@ -564,14 +567,14 @@ class _PlayScreenState extends State<PlayScreen>
               _buildSeatButton(
                 icon: Icons.keyboard_arrow_up,
                 label: 'CIMA',
-                cmd: 'SEAT_UP',
+                cmd: 'SEAT_UP_START',
                 color: Colors.tealAccent,
               ),
               const SizedBox(width: 32),
               _buildSeatButton(
                 icon: Icons.keyboard_arrow_down,
                 label: 'BAIXO',
-                cmd: 'SEAT_DN',
+                cmd: 'SEAT_DOWN_START',
                 color: Colors.tealAccent,
               ),
             ],
